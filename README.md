@@ -13,6 +13,7 @@ This project implements a modern Extract-Load pipeline for British Airways, desi
 │   ├── tasks/           # Custom task implementations
 │   ├── plugins/         # Custom Airflow plugins
 │   └── logs/            # Airflow execution logs
+├── astronomer/          # Astronomer Directory
 ├── data/                # Data files
 │   └── raw_data.csv     # Source data file
 ├── docker/              # Docker configuration
@@ -26,9 +27,9 @@ This project implements a modern Extract-Load pipeline for British Airways, desi
 ---
 
 ## ⚙️ Technology Stack
-![ba_architecture](https://github.com/user-attachments/assets/d64c1a15-baa5-44a6-a086-49706aff2822)
+ [AirlineQuality.com](https://www.airlinequality.com/airline-reviews/british-airways/)
 - **Data Processing**: Python 3.12 with Pandas
-- **Workflow Orchestration**: Apache Airflow
+- **Workflow Orchestration**: Apache Airflow, Astronomer
 - **Data Warehouse**: Snowflake
 - **Data Lake**: AWS S3 for staging
 - **Containerization**: Docker
@@ -38,7 +39,7 @@ This project implements a modern Extract-Load pipeline for British Airways, desi
 ## 🧱 Data Architecture
 
 ### 1. Data Source
-The project processes customer review data scraped from [AirlineQuality.com](https://www.airlinequality.com/airline-reviews/british-airways/), which contains detailed information about customer flight experiences.
+The project processes customer review data scraped from, which contains detailed information about customer flight experiences.
 
 ### 2. Data Processing Pipeline
 1. **Data Crawling**
@@ -54,6 +55,7 @@ The project processes customer review data scraped from [AirlineQuality.com](htt
    - Upload cleaned data to AWS S3 bucket (`upload_cleaned_data_to_s3`)
    - Store in staging area for Snowflake ingestion
    - Maintain data versioning and audit trail
+<img width="1560" height="540" alt="BritishAirways (1)" src="https://github.com/user-attachments/assets/e39ce225-c54a-4622-8b23-ada013f90003" />
 
 4. **Snowflake Loading**
    - Use Snowflake COPY operator to load data from S3
