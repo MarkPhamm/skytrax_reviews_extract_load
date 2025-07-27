@@ -20,16 +20,16 @@ up:
 	docker compose up -d
 
 test:
-	pip3 install pytest flake8 black isort
 	python3 -m pytest astronomer/tests/ -v || echo "No tests found"
 
 lint:
-	pip3 install flake8 black isort
+	@command -v flake8 >/dev/null 2>&1 || { echo "Installing flake8..."; pip3 install --user flake8; }
 	flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 	flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
 format:
-	pip3 install black isort
+	@command -v black >/dev/null 2>&1 || { echo "Please install black: brew install black"; exit 1; }
+	@command -v isort >/dev/null 2>&1 || { echo "Please install isort: brew install isort"; exit 1; }
 	black .
 	isort .
 

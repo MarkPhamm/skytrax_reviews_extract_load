@@ -1,7 +1,9 @@
-from airflow import DAG
-from airflow.utils.dates import days_ago
-from airflow.operators.bash_operator import BashOperator
 from datetime import datetime, timedelta
+
+from airflow.operators.bash_operator import BashOperator
+from airflow.utils.dates import days_ago
+
+from airflow import DAG
 
 schedule_interval = timedelta(days=1)
 start_date = datetime(2025, 3, 27)

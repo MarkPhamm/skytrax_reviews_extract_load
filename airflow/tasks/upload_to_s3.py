@@ -1,10 +1,11 @@
-import sys
-import boto3
 import os
 import pathlib
-from dotenv import dotenv_values
-from botocore.exceptions import ClientError, NoCredentialsError
+import sys
+
+import boto3
 from boto3.s3.transfer import S3Transfer
+from botocore.exceptions import ClientError, NoCredentialsError
+from dotenv import dotenv_values
 
 # Load config
 script_path = pathlib.Path(__file__).parent.resolve()

@@ -1,9 +1,10 @@
-import pandas as pd
-import config as cfg
 import logging
-import re
 import os
-from typing import Dict, Tuple, List, Optional, Union
+import re
+from typing import Dict, List, Optional, Tuple, Union
+
+import config as cfg
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(

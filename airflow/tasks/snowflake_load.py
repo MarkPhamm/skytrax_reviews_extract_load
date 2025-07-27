@@ -1,7 +1,8 @@
-from snowflake import connector
 import pathlib
-from dotenv import dotenv_values
+
 import pandas as pd
+from dotenv import dotenv_values
+from snowflake import connector
 
 # Load config
 script_path = pathlib.Path(__file__).parent.resolve()

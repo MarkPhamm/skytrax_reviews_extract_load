@@ -1,7 +1,9 @@
-from airflow import DAG
-from airflow.utils.dates import days_ago
-from airflow.operators.bash_operator import BashOperator
 from datetime import datetime, timedelta
+
+from airflow.operators.bash_operator import BashOperator
+from airflow.utils.dates import days_ago
+
+from airflow import DAG
 
 # Schedule to run every Monday at 12 AM EST (5 AM UTC)
 schedule_interval = "0 5 * * 1"

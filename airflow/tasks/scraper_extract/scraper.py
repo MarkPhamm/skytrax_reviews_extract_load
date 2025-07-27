@@ -1,9 +1,10 @@
+import logging
 import os
 import re
-import logging
+from typing import Dict, List
+
 import pandas as pd
 import requests
-from typing import Dict, List
 from bs4 import BeautifulSoup
 
 # Config Logging

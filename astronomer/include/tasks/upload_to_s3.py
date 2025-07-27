@@ -1,6 +1,7 @@
-from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-import os
 import logging
+import os
+
+from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
