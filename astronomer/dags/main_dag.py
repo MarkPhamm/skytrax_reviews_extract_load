@@ -3,7 +3,8 @@ from airflow.utils.dates import days_ago
 from airflow.operators.bash_operator import BashOperator
 from datetime import datetime, timedelta
 
-schedule_interval = timedelta(days=3)
+# Schedule to run every Monday at 12 AM EST (5 AM UTC)
+schedule_interval = "0 5 * * 1"
 start_date = days_ago(1)  # Start from yesterday
 default_args = {
     'owner': 'airflow',
