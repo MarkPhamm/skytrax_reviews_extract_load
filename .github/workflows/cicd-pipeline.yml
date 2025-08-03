@@ -1,0 +1,237 @@
+name: British Airways Data Pipeline CI/CD
+
+on:
+  # Run every Monday at 12 AM EST (5 AM UTC)
+  schedule:
+    - cron: '0 5 * * 1'
+  
+  # Also run on push to main and pull requests
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  
+  # Allow manual triggering
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Run Tests
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest flake8 black isort
+    
+    - name: Lint code with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Check code formatting with black
+      run: black --check .
+    
+    - name: Check import sorting with isort
+      run: isort --check-only .
+    
+    - name: Test DAG syntax
+      run: |
+        python -c "
+        import sys
+        sys.path.append('astronomer/dags')
+        try:
+            from main_dag import dag
+            print('DAG syntax is valid')
+        except Exception as e:
+            print(f'DAG syntax error: {e}')
+            sys.exit(1)
+        "
+    
+    - name: Run pytest (if tests exist)
+      run: |
+        if [ -d "astronomer/tests" ]; then
+          cd astronomer && python -m pytest tests/ -v
+        else
+          echo "No tests directory found, skipping pytest"
+        fi
+
+  security-scan:
+    runs-on: ubuntu-latest
+    name: Security Scan
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  build-and-validate:
+    runs-on: ubuntu-latest
+    name: Build and Validate
+    needs: [test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Astronomer Docker image
+      run: |
+        cd astronomer
+        docker build -t british-airways-pipeline:${{ github.sha }} .
+    
+    - name: Validate Airflow DAGs in container
+      run: |
+        docker run --rm british-airways-pipeline:${{ github.sha }} \
+          python -c "
+        import sys
+        sys.path.append('/usr/local/airflow/dags')
+        from main_dag import dag
+        print('DAG validation successful in container')
+        print(f'DAG ID: {dag.dag_id}')
+        print(f'Schedule: {dag.schedule_interval}')
+        print(f'Tasks: {[task.task_id for task in dag.tasks]}')
+        "
+
+  run-data-pipeline:
+    runs-on: ubuntu-latest
+    name: Execute British Airways Data Pipeline
+    needs: [test, security-scan, build-and-validate]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r astronomer/requirements.txt
+    
+    - name: Create data directory
+      run: |
+        mkdir -p astronomer/include/data
+        chmod 777 astronomer/include/data
+    
+    - name: Step 1 - Scrape British Airways Data
+      run: |
+        echo "🕷️ Starting British Airways data scraping..."
+        cd astronomer/include/tasks/scraper_extract
+        python scraper.py
+        echo "✅ Data scraping completed"
+        
+        # Check if raw data was created
+        if [ -f "../data/raw_data.csv" ]; then
+          echo "📄 Raw data file created successfully"
+          echo "Raw data rows: $(wc -l < ../data/raw_data.csv)"
+        else
+          echo "❌ Raw data file not found"
+          exit 1
+        fi
+    
+    - name: Step 2 - Transform and Clean Data
+      run: |
+        echo "🧹 Starting data transformation..."
+        cd astronomer/include/tasks/transform
+        python transform.py
+        echo "✅ Data transformation completed"
+        
+        # Check if cleaned data was created
+        if [ -f "../data/clean_data.csv" ]; then
+          echo "📄 Clean data file created successfully"
+          echo "Clean data rows: $(wc -l < ../data/clean_data.csv)"
+        else
+          echo "❌ Clean data file not found"
+          exit 1
+        fi
+    
+    - name: Step 3 - Upload to S3
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || 'us-east-1' }}
+      run: |
+        echo "☁️ Starting S3 upload..."
+        cd astronomer/include/tasks
+        python upload_to_s3.py
+        echo "✅ S3 upload completed"
+    
+    - name: Step 4 - Load to Snowflake
+      env:
+        SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+        SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE || 'BRITISH_AIRWAYS' }}
+        SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA || 'RAW_DATA' }}
+        SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE || 'COMPUTE_WH' }}
+      run: |
+        echo "❄️ Starting Snowflake load..."
+        cd astronomer/include/tasks
+        python snowflake_load.py
+        echo "✅ Snowflake load completed"
+    
+    - name: Pipeline Summary
+      run: |
+        echo "🎉 British Airways Data Pipeline Completed Successfully!"
+        echo "📅 Executed on: $(date)"
+        echo "📊 Pipeline Summary:"
+        echo "  ✅ Data Scraping"
+        echo "  ✅ Data Transformation" 
+        echo "  ✅ S3 Upload"
+        echo "  ✅ Snowflake Load"
+        
+        # Archive data files as artifacts
+        echo "📦 Archiving data files..."
+    
+    - name: Upload Data Artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: british-airways-data-${{ github.run_number }}
+        path: |
+          astronomer/include/data/*.csv
+        retention-days: 30 

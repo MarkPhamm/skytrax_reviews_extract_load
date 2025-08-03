@@ -1,13 +1,17 @@
+import logging
 import os
 import re
-import logging
+from typing import Dict, List
+
 import pandas as pd
 import requests
-from typing import Dict, List
 from bs4 import BeautifulSoup
 
-#Config Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Config Logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 
 class AirlineReviewScraper:
     """
@@ -23,11 +27,13 @@ class AirlineReviewScraper:
     BASE_URL = "https://www.airlinequality.com/airline-reviews/british-airways"
     PAGE_SIZE = 100
 
-    def __init__(self, num_pages: int, output_path: str = "/opt/airflow/data/raw_data.csv"):
+    def __init__(
+        self, num_pages: int, output_path: str = "/opt/airflow/data/raw_data.csv"
+    ):
         self.num_pages = num_pages
         self.output_path = output_path
         self.reviews_data = []
-    
+
     def scrape(self) -> pd.DataFrame:
         for page in range(1, self.num_pages + 1):
             logging.info(f"Scraping page {page}...")
@@ -66,7 +72,7 @@ class AirlineReviewScraper:
             "date": self.extract_text(review, "time", itemprop="datePublished"),
             "customer_name": self.extract_text(review, "span", itemprop="name"),
             "country": self.extract_country(review),
-            "review_body": self.extract_text(review, "div", itemprop="reviewBody")
+            "review_body": self.extract_text(review, "div", itemprop="reviewBody"),
         }
 
         self.extract_ratings(review, review_data)
@@ -100,7 +106,9 @@ class AirlineReviewScraper:
         country = review.find(string=lambda text: text and "(" in text and ")" in text)
         return country.strip("()") if country else None
 
-    def extract_ratings(self, review: BeautifulSoup, review_data: Dict[str, str]) -> None:
+    def extract_ratings(
+        self, review: BeautifulSoup, review_data: Dict[str, str]
+    ) -> None:
         """
         Extracts ratings from a review and adds them to the review_data dictionary.
 
@@ -139,6 +147,7 @@ class AirlineReviewScraper:
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
         df.to_csv(self.output_path, index=False)
         logging.info(f"Data saved to {self.output_path}")
+
 
 if __name__ == "__main__":
     scraper = AirlineReviewScraper(num_pages=30)

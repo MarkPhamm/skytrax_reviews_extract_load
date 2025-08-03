@@ -1,10 +1,11 @@
-import sys
-import boto3
 import os
 import pathlib
-from dotenv import dotenv_values
-from botocore.exceptions import ClientError, NoCredentialsError
+import sys
+
+import boto3
 from boto3.s3.transfer import S3Transfer
+from botocore.exceptions import ClientError, NoCredentialsError
+from dotenv import dotenv_values
 
 # Load config
 script_path = pathlib.Path(__file__).parent.resolve()
@@ -18,6 +19,7 @@ secret_key = config.get("aws_secret_access_key")
 file_path = "/opt/airflow/data/clean_data.csv"
 s3_filename = "clean_data.csv"
 
+
 def connect_s3():
     """
     Create a boto3 session and connect to the S3 Resource
@@ -27,11 +29,10 @@ def connect_s3():
     """
     if not access_key or not secret_key:
         raise ValueError("AWS credentials are missing in the configuration file.")
-    
+
     try:
         client = boto3.client(
-            "s3", aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key
+            "s3", aws_access_key_id=access_key, aws_secret_access_key=secret_key
         )
         return client
     except NoCredentialsError as e:
@@ -40,6 +41,7 @@ def connect_s3():
     except ClientError as e:
         print("Failed to connect to S3:", e, file=sys.stderr)
         raise e
+
 
 def upload_csv_s3(local_file_path=file_path, s3_file_name=s3_filename):
     """
@@ -55,6 +57,7 @@ def upload_csv_s3(local_file_path=file_path, s3_file_name=s3_filename):
     except ClientError as e:
         print("AWS upload error:", e, file=sys.stderr)
         raise e
+
 
 if __name__ == "__main__":
     upload_csv_s3()

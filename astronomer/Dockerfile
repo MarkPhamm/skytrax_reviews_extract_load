@@ -1,4 +1,4 @@
-FROM quay.io/astronomer/astro-runtime:11.8.0
+FROM astrocrpublic.azurecr.io/runtime:3.0-5
 
 # Copy requirements and install dependencies
 COPY requirements.txt /tmp/requirements.txt
