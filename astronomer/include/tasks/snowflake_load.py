@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 csv_path = "/usr/local/airflow/include/data/clean_data.csv"
 table_name = "BRITISH_AIRWAYS_DB.RAW.REVIEW"
 s3_bucket = "new-british-airline"
-s3_key = "clean_data.csv"
+s3_key = "uploads/cleaned_data.csv"
 stage_name = "MY_S3_STAGE"
 
 

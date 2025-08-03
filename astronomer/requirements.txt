@@ -1,7 +1,7 @@
 # Astro Runtime includes the following pre-installed providers packages: https://www.astronomer.io/docs/astro/runtime-image-architecture\#provider-packages
 
 # Your existing dependencies
-pandas==1.5.3
+pandas>=2.0.0
 apache-airflow-providers-mysql
 google-api-python-client
 Unidecode
