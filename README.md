@@ -1,4 +1,4 @@
-# Airline Reviews Extract-Load Pipeline
+# Skytrax Reviews Extract-Load Pipeline
 
 This project implements a comprehensive Extract-Load pipeline for airline review data, designed to process and analyze customer review data from **Skytrax** ([AirlineQuality.com](https://www.airlinequality.com/)). The pipeline extracts **100,000+ reviews from 500+ airlines worldwide**, leveraging **Apache Airflow**, **Snowflake**, **AWS S3**, and **Docker** to load data into Snowflake before transformation using **dbt**-.
 
