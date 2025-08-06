@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 csv_path = "/usr/local/airflow/include/data/clean_data.csv"
-table_name = "BRITISH_AIRWAYS_DB.RAW.REVIEW"
-s3_bucket = "new-british-airline"
+table_name = "SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS"
+s3_bucket = "new-british-airline"  # Keep existing bucket for compatibility
 s3_key = "uploads/cleaned_data.csv"
-stage_name = "MY_S3_STAGE"
+stage_name = "SKYTRAX_S3_STAGE"
 
 
 def map_dtype(dtype):
@@ -38,9 +38,9 @@ def create_snowflake_infrastructure():
 
         # Step 1: Create database and schemas
         create_commands = [
-            "CREATE DATABASE IF NOT EXISTS BRITISH_AIRWAYS_DB;",
-            "CREATE SCHEMA IF NOT EXISTS BRITISH_AIRWAYS_DB.RAW;",
-            "CREATE SCHEMA IF NOT EXISTS BRITISH_AIRWAYS_DB.MODEL;",
+            "CREATE DATABASE IF NOT EXISTS SKYTRAX_REVIEWS_DB;",
+            "CREATE SCHEMA IF NOT EXISTS SKYTRAX_REVIEWS_DB.RAW;",
+            "CREATE SCHEMA IF NOT EXISTS SKYTRAX_REVIEWS_DB.MODEL;",
         ]
 
         for command in create_commands:
@@ -53,7 +53,7 @@ def create_snowflake_infrastructure():
 
         # Step 3: Create or replace S3 stage with Airflow credentials
         create_stage_sql = f"""
-        CREATE OR REPLACE STAGE BRITISH_AIRWAYS_DB.RAW.{stage_name}
+        CREATE OR REPLACE STAGE SKYTRAX_REVIEWS_DB.RAW.{stage_name}
         URL = 's3://new-british-airline/'
         CREDENTIALS = (
             AWS_KEY_ID = '{credentials.access_key}'
@@ -73,14 +73,24 @@ def create_snowflake_infrastructure():
 
         # Step 4: Read CSV to determine table structure
         df = pd.read_csv(csv_path)
+        
+        # Log column information for verification
+        logger.info(f"CSV columns found: {list(df.columns)}")
+        
+        # Ensure airline_name column is present
+        if 'airline_name' not in df.columns:
+            logger.warning("airline_name column not found in CSV! This might cause issues.")
+        else:
+            logger.info(f"✅ airline_name column found with {df['airline_name'].nunique()} unique airlines")
 
         # Step 5: Generate CREATE TABLE statement
         columns = ",\n    ".join(
-            [f"{col} {map_dtype(dtype)}" for col, dtype in df.dtypes.items()]
+            [f'{col} {map_dtype(dtype)}' for col, dtype in df.dtypes.items()]
         )
         create_table_sql = f"CREATE OR REPLACE TABLE {table_name} (\n    {columns}\n);"
 
         logger.info(f"Creating table: {table_name}")
+        logger.info(f"Table schema:\n{create_table_sql}")
         snowflake_hook.run(create_table_sql)
 
         return True
@@ -99,7 +109,7 @@ def load_data_from_stage():
         # COPY command from stage to table
         copy_sql = f"""
         COPY INTO {table_name}
-        FROM @BRITISH_AIRWAYS_DB.RAW.{stage_name}/{s3_key}
+        FROM @SKYTRAX_REVIEWS_DB.RAW.{stage_name}/{s3_key}
         ON_ERROR = 'CONTINUE';
         """
 
@@ -134,6 +144,20 @@ def verify_data_load():
         logger.info(f"Data verification - Total records loaded: {result}")
         print(f"✅ Data verification - Total records loaded: {result}")
 
+        # Verify airline_name column data
+        try:
+            airline_count_sql = f'SELECT COUNT(DISTINCT airline_name) as airline_count FROM {table_name};'
+            airline_result = snowflake_hook.run(airline_count_sql)
+            logger.info(f"✅ Unique airlines loaded: {airline_result}")
+            
+            # Show sample airline names
+            sample_airlines_sql = f'SELECT DISTINCT airline_name FROM {table_name} LIMIT 10;'
+            sample_result = snowflake_hook.run(sample_airlines_sql)
+            logger.info(f"Sample airlines: {sample_result}")
+            
+        except Exception as e:
+            logger.warning(f"Could not verify airline_name column: {e}")
+
         return True
 
     except Exception as e:
@@ -142,8 +166,8 @@ def verify_data_load():
 
 
 def main():
-    """Main execution function"""
-    logger.info("Starting Snowflake data load process...")
+    """Main execution function for Skytrax multi-airline review data"""
+    logger.info("Starting Skytrax airline reviews data load process...")
 
     # Step 1: Create infrastructure (database, schemas, stage, table)
     create_snowflake_infrastructure()
@@ -154,7 +178,7 @@ def main():
     # Step 3: Verify data load
     verify_data_load()
 
-    logger.info("Snowflake data load process completed successfully!")
+    logger.info("Skytrax airline reviews data load process completed successfully!")
 
 
 if __name__ == "__main__":
