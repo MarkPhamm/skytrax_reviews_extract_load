@@ -39,7 +39,7 @@ def snowflake_copy_task():
 
 
 with DAG(
-    dag_id="british_airways_ingestion_pipeline",
+    dag_id="skytrax_reviews_ingestion_pipeline",
     schedule="0 5 * * 1",
     default_args=default_args,
     start_date=datetime(2025, 3, 27),
@@ -47,13 +47,13 @@ with DAG(
     max_active_runs=1,
 ) as dag:
 
-    scrape_british_data = BashOperator(
-        task_id="scrape_british_data",
+    scrape_skytrax_data = BashOperator(
+        task_id="scrape_skytrax_data",
         bash_command="chmod -R 777 /usr/local/airflow/include/data && python /usr/local/airflow/include/tasks/scraper_extract/scraper.py",
     )
 
     note = BashOperator(
-        task_id="note", bash_command="echo 'Successfully extracted data to raw_data.csv'"
+        task_id="note", bash_command="echo 'Successfully extracted airline reviews from Skytrax to raw_data.csv'"
     )
 
     clean_data = BashOperator(
@@ -75,7 +75,7 @@ with DAG(
         python_callable=snowflake_copy_task,
     )
 (
-    scrape_british_data
+    scrape_skytrax_data
     >> note
     >> clean_data
     >> note_clean_data

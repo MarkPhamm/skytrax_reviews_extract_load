@@ -702,6 +702,7 @@ COLUMN_ORDER = [
     "date_flown",
     "customer_name",
     "nationality",
+    "airline_name",
     "type_of_traveller",
     "seat_type",
     "aircraft",
