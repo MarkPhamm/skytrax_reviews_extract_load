@@ -1,4 +1,7 @@
-pandas==1.5.3
+# Astro Runtime includes the following pre-installed providers packages: https://www.astronomer.io/docs/astro/runtime-image-architecture\#provider-packages
+
+# Your existing dependencies
+pandas>=2.0.0
 apache-airflow-providers-mysql
 google-api-python-client
 Unidecode
@@ -7,3 +10,9 @@ apache-airflow-providers-celery>=3.3.0
 apache-airflow-providers-postgres
 loadenv==0.1.1
 boto3==1.35.0
+
+# Additional providers for your use case
+apache-airflow-providers-snowflake
+apache-airflow-providers-amazon
+snowflake-connector-python
+python-dotenv

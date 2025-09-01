@@ -19,7 +19,7 @@ def upload_to_s3():
     # Path to the cleaned data file
     file_path = "/usr/local/airflow/include/data/clean_data.csv"
     s3_key = "uploads/cleaned_data.csv"
-    bucket_name = "new-british-airline"
+    bucket_name = "skytrax-review-staging"
 
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"{file_path} not found")

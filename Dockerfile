@@ -1,6 +1,5 @@
-FROM apache/airflow:2.9.2-python3.10
+FROM astrocrpublic.azurecr.io/runtime:3.0-5
 
-COPY requirements.txt /requirements.txt
-
-RUN pip install --upgrade pip
-RUN pip install  -r /requirements.txt~~
+# Copy requirements and install dependencies
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
