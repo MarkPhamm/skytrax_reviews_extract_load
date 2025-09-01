@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 csv_path = "/usr/local/airflow/include/data/clean_data.csv"
 table_name = "SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS"
-s3_bucket = "new-british-airline"  # Keep existing bucket for compatibility
+s3_bucket = "skytrax-review-staging"  # Keep existing bucket for compatibility
 s3_key = "uploads/cleaned_data.csv"
 stage_name = "SKYTRAX_S3_STAGE"
 
@@ -54,7 +54,7 @@ def create_snowflake_infrastructure():
         # Step 3: Create or replace S3 stage with Airflow credentials
         create_stage_sql = f"""
         CREATE OR REPLACE STAGE SKYTRAX_REVIEWS_DB.RAW.{stage_name}
-        URL = 's3://new-british-airline/'
+        URL = 's3://skytrax-review-staging/'
         CREDENTIALS = (
             AWS_KEY_ID = '{credentials.access_key}'
             AWS_SECRET_KEY = '{credentials.secret_key}'
