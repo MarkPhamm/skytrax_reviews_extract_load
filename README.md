@@ -37,6 +37,48 @@ This project implements a comprehensive Extract-Load pipeline for airline review
 
 ---
 
+## Getting Started
+
+### a) Local development
+
+- Install Docker Desktop and the Astro CLI (`astro`).
+- From the project root, run: `astro dev start`.
+- Open the Airflow UI at `http://localhost:8080` (default user/password `airflow` / `airflow` unless changed).
+- In the Airflow UI, go to **Admin → Connections** and configure:
+  - `aws_s3_connection`
+    - Conn Id: `aws_s3_connection`
+    - Conn Type: `Amazon Web Services`
+    - Login: your `AWS_ACCESS_KEY_ID`
+    - Password: your `AWS_SECRET_ACCESS_KEY`
+    - Extra: `{"region_name": "us-east-1"}` (or your AWS region)
+  - `snowflake_default`
+    - Conn Id: `snowflake_default`
+    - Conn Type: `Snowflake`
+    - Account: your Snowflake account (e.g. `abc12345.us-east-1`)
+    - User: your Snowflake user
+    - Password: your Snowflake password
+    - Database: `SKYTRAX_REVIEWS_DB`
+    - Schema: `RAW`
+    - Warehouse: your Snowflake warehouse
+- In the Airflow UI, enable and trigger `main_dag` to run the end‑to‑end extract‑load pipeline.
+
+### b) GitHub Actions
+
+- Push this project to a GitHub repository.
+- In GitHub, go to **Settings → Secrets and variables → Actions** and add these repository secrets:
+  - `AWS_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY`
+  - `AWS_DEFAULT_REGION` (e.g. `us-east-1`)
+  - `SNOWFLAKE_ACCOUNT`
+  - `SNOWFLAKE_USER`
+  - `SNOWFLAKE_PASSWORD`
+  - `SNOWFLAKE_DATABASE` (e.g. `SKYTRAX_REVIEWS_DB`)
+  - `SNOWFLAKE_SCHEMA` (e.g. `RAW`)
+  - `SNOWFLAKE_WAREHOUSE`
+- Once secrets are configured, the workflow `.github/workflows/cicd-pipeline.yml` will:
+  - run tests and validations on push/PR, and
+  - execute the full data pipeline on the scheduled run (every Monday 12 AM EST) or when manually triggered.
+
 ## 🧱 Data Architecture
 
 ### 1. Data Source
