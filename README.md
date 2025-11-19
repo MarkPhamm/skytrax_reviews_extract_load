@@ -62,7 +62,7 @@ This project implements a comprehensive Extract-Load pipeline for airline review
     - Warehouse: your Snowflake warehouse
 - In the Airflow UI, enable and trigger `main_dag` to run the end‑to‑end extract‑load pipeline.
 
-### b) GitHub Actions
+### b) GitHub Actions 
 
 - Push this project to a GitHub repository.
 - In GitHub, go to **Settings → Secrets and variables → Actions** and add these repository secrets:
