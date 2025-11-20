@@ -49,7 +49,7 @@ with DAG(
 
     scrape_skytrax_data = BashOperator(
         task_id="scrape_skytrax_data",
-        bash_command=(
+        bash_command=(  
             "mkdir -p /usr/local/airflow/include/data && "
             "chmod -R 777 /usr/local/airflow/include/data && "
             "python /usr/local/airflow/include/tasks/scraper_extract/scraper.py"
