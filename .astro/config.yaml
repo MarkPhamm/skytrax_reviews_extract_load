@@ -1,2 +1,4 @@
+postgres:
+    port: "5440"
 project:
-    name: british-airways-astronomer
+    name: skytrax-reviews-extract-load
