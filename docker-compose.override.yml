@@ -1,0 +1,24 @@
+# Mounts the local landing/ directory into every Airflow container so that
+# CSV files written inside Docker are persisted to the host filesystem.
+#
+# Astronomer merges this file automatically when you run `astro dev start`.
+# The landing/ dir is at /usr/local/airflow/landing inside each container.
+
+version: "3.4"
+
+x-airflow-common: &airflow-common
+  volumes:
+    - ./landing:/usr/local/airflow/landing
+
+services:
+  scheduler:
+    <<: *airflow-common
+
+  webserver:
+    <<: *airflow-common
+
+  triggerer:
+    <<: *airflow-common
+
+  worker:
+    <<: *airflow-common
