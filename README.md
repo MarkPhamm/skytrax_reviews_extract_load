@@ -1,122 +1,73 @@
 # Skytrax Reviews Extract-Load Pipeline
 
-This project implements a comprehensive Extract-Load pipeline for airline review data, designed to process and analyze customer review data from **Skytrax** ([AirlineQuality.com](https://www.airlinequality.com/)). The pipeline extracts **100,000+ reviews from 500+ airlines worldwide**, leveraging **Apache Airflow**, **Snowflake**, **AWS S3**, and **Docker** to load data into Snowflake before transformation using **dbt**-.
+EL pipeline that scrapes airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages data to S3, and loads into Snowflake. Orchestrated with Apache Airflow on Astronomer.
 
----
+## Stack
 
-## 🗂 Project Structure
+- **Orchestrator**: Apache Airflow (Astronomer Runtime, Docker)
+- **Storage**: AWS S3 (landing zone) + Snowflake (`SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS`)
+- **IaC**: Terraform (S3 bucket, IAM roles, Snowflake resources)
+- **Language**: Python 3.12, pandas, BeautifulSoup
 
-```
-.
-├── airflow/             # Airflow configuration and DAGs
-│   ├── dags/            # Airflow DAG definitions
-│   ├── tasks/           # Custom task implementations
-│   ├── plugins/         # Custom Airflow plugins
-│   └── logs/            # Airflow execution logs
-├── astronomer/          # Astronomer Directory
-├── data/                # Data files
-│   └── raw_data.csv     # Source data file
-├── docker/              # Docker configuration
-│   ├── docker-compose.yaml
-│   └── Dockerfile
-├── .env                 # Environment variables
-├── requirements.txt     # Python dependencies
-└── Makefile             # Project automation commands
+## Data Flow
+
+```text
+Scrape (26 A-Z tasks)
+  → split by review date
+  → upload to S3 raw/YYYY/MM/raw_data_YYYYMMDD.csv
+  → Airflow pulls from S3, cleans/transforms
+  → upload to S3 processed/YYYY/MM/clean_data_YYYYMMDD.csv
+  → COPY INTO Snowflake SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS
 ```
 
----
+## DAGs
 
-## ⚙️ Technology Stack
+| DAG | Schedule | Notes |
+| --- | -------- | ----- |
+| `skytrax_crawl` | Daily 02:00 UTC | Param `full_scrape=True` for initial load |
+| `skytrax_process` | Dataset | Triggered when crawl uploads raw files |
+| `skytrax_snowflake` | Dataset | Triggered when process uploads cleaned files |
 
-- **Data Source**: Skytrax ([AirlineQuality.com](https://www.airlinequality.com/)) - 500+ airlines
-- **Data Processing**: Python 3.12 with Pandas, BeautifulSoup, Requests
-- **Workflow Orchestration**: Apache Airflow, Astronomer
-- **Data Warehouse**: Snowflake
-- **Data Lake**: AWS S3 for staging
-- **Containerization**: Docker
+## Quickstart (local dev)
 
----
+```bash
+# Install dependencies
+uv sync
 
-## 🧱 Data Architecture
+# Smoke test (1 airline, 1 page)
+make scrape-smoke
 
-### 1. Data Source
-The project processes comprehensive airline review data scraped from **Skytrax (AirlineQuality.com)**, which contains detailed information about customer flight experiences across **500+ airlines worldwide**.
+# Full scrape (all airlines)
+make scrape
 
-### 2. Data Processing Pipeline
-1. **Data Crawling**
-   - Automatically discover and crawl customer reviews from all airlines listed on Skytrax
-   - Extract **100,000+ reviews** from **500+ airlines** including major carriers worldwide
-   - Store raw data with airline identification in `raw_data.csv`
-   - Features intelligent pagination and error handling for robust data collection
+# Run tests
+make test
+```
 
-2. **Data Cleaning & Transformation**
-   - Process and clean the raw multi-airline data
-   - Standardize formats across different airline review structures
-   - Handle missing values and normalize rating systems
-   - Generate cleaned dataset with consistent schema
+Set `STORAGE_MODE=local` to skip all S3/Snowflake calls during local development.
 
-3. **Staging in S3**
-   - Upload cleaned multi-airline data to AWS S3 bucket (`upload_cleaned_data_to_s3`)
-   - Store in staging area for Snowflake ingestion
-   - Maintain data versioning and audit trail
-   - Support large-scale data processing with partitioning by airline
+## Airflow Setup
 
-4. **Snowflake Loading**
-   - Use Snowflake COPY operator to load data from S3
-   - Transform and load into target tables with airline-specific schemas
-   - Implement incremental loading strategy for continuous data updates
-   - Support analytics across multiple airlines and comparative analysis
+1. Start Airflow: `astro dev start`
+1. Set Airflow Variables:
 
-### 3. Data Quality Framework
-- Multi-airline data validation checks
-- Comprehensive error handling and logging across all airline sources
-- Pipeline monitoring and alerting for large-scale operations
-- Snowflake data quality monitoring with airline-specific metrics
+   | Variable | Description |
+   | -------- | ----------- |
+   | `STORAGE_MODE` | `local` or `s3` |
+   | `S3_BUCKET` | S3 bucket name |
+   | `SCRAPER_WORKERS` | Parallel scraper threads |
+   | `AWS_CONN_ID` | Airflow AWS connection ID |
 
----
+1. Set Airflow connections: `aws_s3_connection`, `snowflake_default`
 
-## 🧩 Project Components
+## Terraform
 
-### 📊 Airflow DAGs
-Located in `airflow/dags/`:
-- DAG definitions for multi-airline data processing workflows
-- Task scheduling and dependency management for large-scale operations
-- Error handling and retry logic for reliable data extraction
-- Snowflake data loading and transformation tasks for all airlines
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars  # fill in values
+export SNOWFLAKE_PASSWORD=yourpassword
+terraform init
+terraform apply
+```
 
-### 🛠 Custom Tasks
-Located in `airflow/tasks/`:
-- **Multi-airline scraper**: Automated discovery and extraction from 500+ airlines
-- **Data processing**: Transformation logic for diverse airline data formats
-- **S3 upload operations**: Large-scale data transfer and storage
-- **Snowflake operations**: Data loading and unloading for analytics
-- **Custom operators**: Business logic for airline review processing
-- **Utility functions**: Data handling for high-volume operations
-
-### 🔌 Airflow Plugins
-Located in `airflow/plugins/`:
-- Custom hooks and operators for airline data processing
-- Extended Airflow functionality for web scraping at scale
-- Integration with Snowflake and S3 services for big data workflows
-
----
-
-## 📦 Key Dependencies
-
-- `pandas==1.5.3` - Data processing and analysis
-- `requests` - HTTP library for web scraping
-- `beautifulsoup4` - HTML parsing for airline review extraction
-- `apache-airflow-providers-snowflake` - Snowflake integration
-- `snowflake-connector-python` - Direct Snowflake connectivity
-- `boto3==1.35.0` - AWS S3 operations
-- `apache-airflow-providers-amazon` - AWS services integration
-
-## 🚀 Key Features
-
-- **Comprehensive Coverage**: Extracts reviews from 500+ airlines on Skytrax
-- **Scalable Architecture**: Handles 100,000+ reviews with robust error handling
-- **Airline Identification**: Each review tagged with airline name for analysis
-- **Intelligent Discovery**: Automatically finds and processes all available airlines
-- **Production Ready**: Containerized with Docker for reliable deployment
-
----
+Resources provisioned: S3 bucket (versioned, encrypted, lifecycle rules), Airflow IAM role (S3 read/write), analyst IAM role (S3 read-only), Snowflake database/schema/table/stage.

@@ -145,8 +145,8 @@ resource "snowflake_storage_integration" "s3" {
   type    = "EXTERNAL_STAGE"
   enabled = true
 
-  storage_provider     = "S3"
-  storage_aws_role_arn = aws_iam_role.airflow.arn
+  storage_provider          = "S3"
+  storage_aws_role_arn      = aws_iam_role.airflow.arn
   storage_allowed_locations = ["s3://${aws_s3_bucket.landing.id}/"]
 }
 

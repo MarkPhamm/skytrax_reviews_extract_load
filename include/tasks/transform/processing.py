@@ -101,7 +101,12 @@ def _clean_date_submitted(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clean_nationality(df: pd.DataFrame) -> pd.DataFrame:
-    df["nationality"] = df["nationality"].str.replace(r"[()]", "", regex=True).str.strip()
+    df["nationality"] = (
+        df["nationality"].astype(str)
+        .str.replace(r"[()]", "", regex=True)
+        .str.strip()
+        .replace({"nan": pd.NA, "": pd.NA})
+    )
     return df
 
 
