@@ -1,0 +1,21 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is gitignored — never commit it.
+
+aws_region  = "us-east-1"
+bucket_name = "skytrax-reviews-landing-dev"
+environment = "dev"
+
+# ARN of the IAM principal that runs Airflow (user, role, or account root)
+airflow_trusted_arn = "arn:aws:iam::123456789012:user/airflow-runner"
+
+# ARNs of analysts who should get read-only access (can be empty list)
+analyst_trusted_arns = [
+  "arn:aws:iam::123456789012:user/analyst-alice",
+  "arn:aws:iam::123456789012:user/analyst-bob",
+]
+
+# Snowflake — from your account identifier (e.g. MYORG-MYACCOUNT)
+snowflake_org     = "MYORG"
+snowflake_account = "MYACCOUNT"
+snowflake_user    = "TERRAFORM_USER"
+# Set password via env var: export SNOWFLAKE_PASSWORD=yourpassword
