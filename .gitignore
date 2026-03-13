@@ -1,4 +1,6 @@
 .git
+.venv/
+.uv-cache/
 .env
 .DS_Store
 airflow_settings.yaml
@@ -11,3 +13,13 @@ airflow.cfg
 airflow.db
 # Ignore all data files
 include/data/
+
+# Landing dir — keep folder structure, ignore CSVs
+landing/*.csv
+landing/**/*.csv
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.backup

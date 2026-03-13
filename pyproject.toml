@@ -1,0 +1,39 @@
+[project]
+name = "skytrax-pipeline"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.0.0",
+    "requests",
+    "beautifulsoup4",
+    "boto3==1.35.0",
+    "snowflake-connector-python",
+    "python-dotenv",
+    "Unidecode",
+    "openpyxl",
+    "loadenv==0.1.1",
+    "google-api-python-client",
+    "apache-airflow-providers-mysql",
+    "apache-airflow-providers-celery>=3.3.0",
+    "apache-airflow-providers-postgres",
+    "apache-airflow-providers-snowflake",
+    "apache-airflow-providers-amazon",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "isort",
+]
+
+[tool.uv]
+package = false   # scripts-only project — uv installs deps but doesn't build/install this repo itself
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100

@@ -1,5 +1,6 @@
 FROM astrocrpublic.azurecr.io/runtime:3.0-5
 
-# Copy requirements and install dependencies
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Install uv + hatchling, then install project deps from pyproject.toml
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir uv \
+    && uv pip install --system --no-cache .
