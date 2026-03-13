@@ -12,6 +12,7 @@ The landing root is resolved as (in priority order):
 import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
@@ -126,11 +127,24 @@ class AllAirlineReviewScraper:
         for page in range(1, self.num_pages_per_airline + 1):
             url = f"{airline_url}/page/{page}/?sortby=post_date%3ADesc&pagesize={self.PAGE_SIZE}"
 
-            try:
-                response = self._session.get(url, timeout=10)
-                response.raise_for_status()
-            except requests.RequestException as e:
-                logger.warning("Skipping %s page %d: %s", airline_name, page, e)
+            response = None
+            for attempt in range(1, 4):  # up to 3 attempts
+                try:
+                    response = self._session.get(url, timeout=30)
+                    response.raise_for_status()
+                    break
+                except requests.Timeout:
+                    wait = attempt * 5  # 5s, 10s, 15s
+                    if attempt < 3:
+                        logger.warning("Timeout %s page %d (attempt %d) — retrying in %ds", airline_name, page, attempt, wait)
+                        time.sleep(wait)
+                    else:
+                        logger.warning("Skipping %s page %d after 3 timeouts", airline_name, page)
+                except requests.RequestException as e:
+                    logger.warning("Skipping %s page %d: %s", airline_name, page, e)
+                    break
+
+            if response is None or not response.ok:
                 continue
 
             soup = BeautifulSoup(response.content, "html.parser")

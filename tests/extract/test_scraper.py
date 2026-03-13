@@ -216,10 +216,27 @@ def test_scrape_airline_reviews_returns_reviews(mock_get):
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_scrape_airline_reviews_skips_failed_pages(mock_get):
     import requests as req
-    mock_get.side_effect = req.RequestException("timeout")
+    mock_get.side_effect = req.RequestException("connection error")
     scraper = AllAirlineReviewScraper(num_pages_per_airline=2)
     reviews = scraper.scrape_airline_reviews("Test Air", "https://example.com/airline-reviews/test-air")
     assert reviews == []
+
+
+@patch("include.tasks.extract.scraper.time.sleep")
+@patch("include.tasks.extract.scraper.requests.Session.get")
+def test_scrape_airline_reviews_retries_on_timeout(mock_get, mock_sleep):
+    import requests as req
+    # First two calls timeout, third succeeds
+    mock_get.side_effect = [
+        req.Timeout("timed out"),
+        req.Timeout("timed out"),
+        _mock_response(_PAGE_HTML),
+        _mock_response(_EMPTY_PAGE_HTML),
+    ]
+    scraper = AllAirlineReviewScraper(num_pages_per_airline=2)
+    reviews = scraper.scrape_airline_reviews("Test Air", "https://example.com/airline-reviews/test-air")
+    assert len(reviews) == 1
+    assert mock_sleep.call_count == 2  # slept between retries
 
 
 # ---------------------------------------------------------------------------
