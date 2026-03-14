@@ -3,18 +3,25 @@
 #
 # Astronomer merges this file automatically when you run `astro dev start`.
 # The landing/ dir is at /usr/local/airflow/landing inside each container.
+# Image name is derived from the project name in .astro/config.yaml.
 
 services:
   scheduler:
+    image: skytrax-reviews_d62be7/airflow:latest
     volumes:
       - ./landing:/usr/local/airflow/landing
 
   webserver:
-    ports:
-      - 8081:8080
+    image: skytrax-reviews_d62be7/airflow:latest
     volumes:
       - ./landing:/usr/local/airflow/landing
 
   triggerer:
+    image: skytrax-reviews_d62be7/airflow:latest
+    volumes:
+      - ./landing:/usr/local/airflow/landing
+
+  api-server:
+    image: skytrax-reviews_d62be7/airflow:latest
     volumes:
       - ./landing:/usr/local/airflow/landing
