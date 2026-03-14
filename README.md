@@ -1,6 +1,6 @@
 # Skytrax Reviews Extract-Load Pipeline
 
-Production-grade EL pipeline that scrapes 60,000+ airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages partitioned data to S3, and loads into Snowflake for analytics.
+Production-grade EL pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages partitioned data to S3, and loads into Snowflake for analytics.
 
 - **26 parallel scraping tasks** (A-Z) with dynamic task mapping and dataset-driven DAG triggers
 - **Infrastructure as Code** — S3 bucket (versioning, encryption, lifecycle policies), IAM roles/users with least-privilege access, Snowflake database/schema/table/S3 external stage — all managed with Terraform
@@ -10,7 +10,7 @@ Production-grade EL pipeline that scrapes 60,000+ airline reviews from [AirlineQ
 
 ```text
                     ┌──────────────────────────────┐
-                    │   airlinequality.com          │
+                    │   airlinequality.com         │
                     └──────────────┬───────────────┘
                                    │ scrape (26 A-Z tasks)
                                    ▼
@@ -27,9 +27,9 @@ Production-grade EL pipeline that scrapes 60,000+ airline reviews from [AirlineQ
                                    │ COPY INTO
                                    ▼
                     ┌──────────────────────────────┐
-                    │   Snowflake                   │
-                    │   SKYTRAX_REVIEWS_DB.RAW      │
-                    │   .AIRLINE_REVIEWS             │
+                    │   Snowflake                  │
+                    │   SKYTRAX_REVIEWS_DB.RAW     │
+                    │   .AIRLINE_REVIEWS           │
                     └──────────────────────────────┘
 ```
 
