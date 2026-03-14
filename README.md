@@ -42,6 +42,39 @@ Production-grade EL pipeline that scrapes 160,000+ airline reviews from [Airline
 | IaC | Terraform (AWS + Snowflake) |
 | Language | Python 3.12, pandas, BeautifulSoup |
 
+## S3 Bucket Structure
+
+Data is date-partitioned by review date, organized into two prefixes:
+
+```text
+s3://skytrax-reviews-landing-<account-id>/
+  raw/
+    2024/
+      01/
+        raw_data_20240101.csv
+        raw_data_20240102.csv
+      02/
+        raw_data_20240201.csv
+    ...
+  processed/
+    2024/
+      01/
+        clean_data_20240101.csv
+        clean_data_20240102.csv
+    ...
+```
+
+- **Versioning** enabled — protects against accidental overwrites
+- **AES256 encryption** — server-side encryption on all objects
+- **Lifecycle rules** — transitions to Standard-IA after 30 days, expires old versions after 90 days
+- **Public access blocked** — all public access is denied at the bucket level
+
+## Loading Strategy
+
+**Incremental (daily)**: The `skytrax_crawl` DAG runs at 02:00 UTC, scrapes only yesterday's reviews, and uploads to S3. The downstream `skytrax_process` and `skytrax_snowflake` DAGs trigger automatically via Airflow Datasets — no cron, no polling. Each review date maps to exactly one CSV file, so re-runs are idempotent.
+
+**Bulk backfill**: For the initial load, trigger `skytrax_crawl` with `full_scrape=True` to scrape all historical reviews (back to 2010). Snowflake's `COPY INTO` tracks which files have already been loaded, so re-running the bulk load is safe — no duplicates.
+
 ## DAGs
 
 | DAG | Trigger | What it does |
