@@ -66,9 +66,15 @@ s3://skytrax-reviews-landing-<account-id>/
     ...
 ```
 
+The bucket contains two top-level prefixes — `raw/` for scraped data and `processed/` for cleaned data:
+
 ![S3 Bucket](assets/aws/s3_dir.png)
 
+Raw CSVs are written directly by the scraper, one file per review date:
+
 ![S3 Raw](assets/aws/s3_raw.png)
+
+Processed CSVs are cleaned, transformed, and ready for Snowflake ingestion:
 
 ![S3 Processed](assets/aws/s3_processed.png)
 

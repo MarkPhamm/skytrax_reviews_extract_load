@@ -70,6 +70,30 @@ astro dev start
 
 The Airflow UI is available at `http://localhost:8080` (or your configured port).
 
+## DAGs Overview
+
+The pipeline consists of three DAGs that are chained together via Airflow Datasets:
+
+![DAGs](../assets/airflow/dags.png)
+
+### `skytrax_crawl` — Extract
+
+Runs daily at 02:00 UTC. Scrapes airline reviews from airlinequality.com using 26 parallel tasks (one per letter A-Z), splits reviews by date, and uploads raw CSVs to S3. On completion, it emits the `skytrax://raw` dataset to trigger the next DAG.
+
+![skytrax_crawl DAG](../assets/airflow/skytrax_crawl_dag.png)
+
+### `skytrax_process` — Transform
+
+Triggered automatically when `skytrax_crawl` emits new raw data. For each review date, it downloads the raw CSV, runs the cleaning/transformation pipeline, and uploads the processed CSV to S3. Emits the `skytrax://processed` dataset when done.
+
+![skytrax_process DAG](../assets/airflow/skytrax_process_dag.png)
+
+### `skytrax_snowflake` — Load
+
+Triggered automatically when `skytrax_process` emits processed data. Runs `COPY INTO` for each review date to load the cleaned CSVs from the S3 external stage into Snowflake.
+
+![skytrax_snowflake DAG](../assets/airflow/skytrax_snowflake.png)
+
 ## Step 4: Run the pipeline
 
 ### Daily incremental run
@@ -83,9 +107,9 @@ To trigger manually: click the play button on `skytrax_crawl` in the Airflow UI.
 For the first run, you need to scrape all historical reviews:
 
 1. Go to the `skytrax_crawl` DAG in the Airflow UI
-2. Click **Trigger DAG w/ config**
-3. Set `full_scrape` to `true`
-4. Click **Trigger**
+1. Click **Trigger DAG w/ config**
+1. Set `full_scrape` to `true`
+1. Click **Trigger**
 
 This produces hundreds of raw CSVs going back to 2010. The downstream `skytrax_process` and `skytrax_snowflake` DAGs trigger automatically.
 
