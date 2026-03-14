@@ -31,6 +31,9 @@ dev = [
 [tool.uv]
 package = false   # scripts-only project — uv installs deps but doesn't build/install this repo itself
 
+[tool.setuptools.packages.find]
+include = ["include*"]
+
 [tool.black]
 line-length = 100
 
