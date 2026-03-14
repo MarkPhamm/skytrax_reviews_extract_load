@@ -41,7 +41,7 @@ default_args = {
 
 @dag(
     dag_id="skytrax_crawl",
-    schedule="0 2 * * *",
+    schedule="0 16 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
