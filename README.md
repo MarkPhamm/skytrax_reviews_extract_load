@@ -2,7 +2,9 @@
 
 ![Airline](assets/images/airline.png)
 
-Production-grade EL pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages partitioned data to S3, and loads into Snowflake for analytics.
+At Insurify, I work with Airflow, Terraform, and AWS every day. Two years ago, I signed up for an AWS account and accidentally racked up a $21,000 bill just from spinning up Amazon QuickSight — thankfully the Billing team sorted it out. That experience taught me how easy it is to get burned by cloud services if you don't understand what you're provisioning.
+
+This project is my attempt to break down the tools I use at work into something anyone can follow. It's an EL pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages partitioned data to S3, and loads into Snowflake — with every piece of infrastructure defined in Terraform so you know exactly what you're spinning up (and what it costs).
 
 - **26 parallel scraping tasks** (A-Z) with dynamic task mapping and dataset-driven DAG triggers
 - **Infrastructure as Code** — S3 bucket (versioning, encryption, lifecycle policies), IAM roles/users with least-privilege access, Snowflake database/schema/table/S3 external stage — all managed with Terraform
