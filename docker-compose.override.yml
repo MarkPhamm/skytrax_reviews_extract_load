@@ -16,6 +16,8 @@ services:
 
   webserver:
     <<: *airflow-common
+    ports:
+      - 8081:8080
 
   triggerer:
     <<: *airflow-common

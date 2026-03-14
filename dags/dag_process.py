@@ -90,6 +90,8 @@ def process_dag():
     @task()
     def clean_date(raw_path: str) -> str:
         """Run the full cleaning pipeline for one date's raw CSV."""
+        import tempfile
+        import pandas as pd
         from pathlib import Path
         from include.tasks.transform.processing import clean as _clean, get_output_path
 
@@ -98,8 +100,18 @@ def process_dag():
         date_part = stem.split("_")[-1]     # 20260312
         review_date = date(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:]))
 
+        # Filter scraper junk before cleaning
+        df = pd.read_csv(raw_path, low_memory=False)
+        df = df[df["airline_name"] != "Read more"]
+
         output_path = get_output_path(review_date)
-        _clean(Path(raw_path), output_path)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as tmp:
+            df.to_csv(tmp, index=False)
+            tmp_path = tmp.name
+        try:
+            _clean(Path(tmp_path), output_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
         return str(output_path)
 
     @task(outlets=[PROCESSED_DATASET])
