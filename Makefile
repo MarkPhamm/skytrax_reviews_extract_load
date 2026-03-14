@@ -1,5 +1,24 @@
 PYTHON := uv run python
 
+# ── Airflow / Astronomer ──────────────────────────────────────────────────────
+
+## First-time setup: build the Astronomer image and patch docker-compose.override.yml
+## with the correct local image name. Pass PORT=NNNN if 8080 is taken on your machine.
+##   make dev-setup           # uses default port 8080
+##   make dev-setup PORT=8081 # uses port 8081
+dev-setup:
+	@echo "Building Astronomer image..."
+	@astro dev start --no-browser 2>&1 | tail -3; astro dev stop 2>/dev/null || true
+	@IMAGE=$$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'airflow:latest' | grep skytrax | head -1); \
+	echo "Detected image: $$IMAGE"; \
+	sed -i.bak "s|image: skytrax-reviews_.*/airflow:latest|image: $$IMAGE|g" docker-compose.override.yml && rm -f docker-compose.override.yml.bak; \
+	echo "docker-compose.override.yml patched."
+	@if [ -n "$(PORT)" ]; then \
+		astro config set webserver.port $(PORT); \
+		astro config set api-server.port $(PORT); \
+		echo "Port set to $(PORT)."; \
+	fi
+
 # ── Scraper ──────────────────────────────────────────────────────────────────
 
 ## Quick smoke test: 1 airline, 1 page (~100 rows). Writes to landing/
@@ -44,4 +63,4 @@ test:
 test-scraper:
 	uv run pytest tests/extract/test_scraper.py -v
 
-.PHONY: scrape-smoke scrape process-yesterday process test test-scraper
+.PHONY: dev-setup scrape-smoke scrape process-yesterday process test test-scraper
