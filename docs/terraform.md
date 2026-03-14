@@ -175,6 +175,10 @@ Type `yes` when prompted. This takes about 30 seconds.
 | IAM user `skytrax-airflow-dev` | Programmatic access for Airflow with direct S3 policy |
 | Access key | Credentials for the Airflow IAM user |
 
+| IAM Users | IAM Roles |
+| --------- | --------- |
+| ![IAM Users](../assets/aws/iam_users.png) | ![IAM Roles](../assets/aws/iam_roles.png) |
+
 ### Snowflake resources
 
 | Resource | Purpose |

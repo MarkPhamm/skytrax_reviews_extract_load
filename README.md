@@ -1,5 +1,7 @@
 # Skytrax Reviews Extract-Load Pipeline
 
+![Airline](assets/images/airline.png)
+
 Production-grade EL pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages partitioned data to S3, and loads into Snowflake for analytics.
 
 - **26 parallel scraping tasks** (A-Z) with dynamic task mapping and dataset-driven DAG triggers
@@ -63,6 +65,12 @@ s3://skytrax-reviews-landing-<account-id>/
         clean_data_20240102.csv
     ...
 ```
+
+![S3 Bucket](assets/aws/s3_dir.png)
+
+| Raw files | Processed files |
+| --------- | --------------- |
+| ![S3 Raw](assets/aws/s3_raw.png) | ![S3 Processed](assets/aws/s3_processed.png) |
 
 - **Versioning** enabled — protects against accidental overwrites
 - **AES256 encryption** — server-side encryption on all objects
