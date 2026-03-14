@@ -83,6 +83,7 @@ def clean(input_path: Path, output_path: Path) -> Path:
 # Transformation steps (pure functions — each takes and returns a DataFrame)
 # ---------------------------------------------------------------------------
 
+
 def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.rename(columns=lambda x: x.strip().lower().replace(" ", "_"), inplace=True)
     df.columns = df.columns.str.replace("&", "and").str.replace("-", "_")
@@ -94,15 +95,16 @@ def _clean_date_submitted(df: pd.DataFrame) -> pd.DataFrame:
     df["date_submitted"] = df["date_submitted"].str.replace(
         r"(\d+)(st|nd|rd|th)", r"\1", regex=True
     )
-    df["date_submitted"] = (
-        pd.to_datetime(df["date_submitted"], format="%d %B %Y").dt.strftime("%Y-%m-%d")
+    df["date_submitted"] = pd.to_datetime(df["date_submitted"], format="%d %B %Y").dt.strftime(
+        "%Y-%m-%d"
     )
     return df
 
 
 def _clean_nationality(df: pd.DataFrame) -> pd.DataFrame:
     df["nationality"] = (
-        df["nationality"].astype(str)
+        df["nationality"]
+        .astype(str)
         .str.replace(r"[()]", "", regex=True)
         .str.strip()
         .replace({"nan": pd.NA, "": pd.NA})
@@ -133,10 +135,9 @@ def _clean_review_body(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clean_date_flown(df: pd.DataFrame) -> pd.DataFrame:
-    df["date_flown"] = (
-        pd.to_datetime(df["date_flown"], format="%B %Y", errors="coerce")
-        .dt.strftime("%Y-%m-%d")
-    )
+    df["date_flown"] = pd.to_datetime(
+        df["date_flown"], format="%B %Y", errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
     return df
 
 
@@ -166,56 +167,98 @@ def _clean_ratings(df: pd.DataFrame) -> pd.DataFrame:
 def _parse_route(route: str) -> Dict[str, Union[str, None]]:
     """Parse a route string into city/airport components."""
 
+    def _strip_qualifier(loc: str) -> str:
+        """Remove trailing state/country qualifiers added by reviewers.
+
+        'Miami, FL'              → 'Miami'
+        'San Juan, Puerto Rico'  → 'San Juan'
+        'Denver, Colorado'       → 'Denver'
+        'Raleigh Durham'         → 'Raleigh Durham'  (no comma → unchanged)
+        """
+        return loc.split(",")[0].strip()
+
     def extract(location: str) -> Tuple[Optional[str], Optional[str]]:
         if not location or pd.isna(location) or not location.strip():
             return None, None
-        loc = location.strip().lower()
 
-        iata = re.search(r"\b([a-z]{3})\b", loc)
-        if iata:
-            code = iata.group(1).upper()
+        loc_clean = _strip_qualifier(location.strip())
+        loc = loc_clean.lower()
+
+        # 1. Explicit IATA code written in uppercase by the reviewer
+        #    ("New York JFK", "London LHR") — must use original case
+        m = re.search(r"\b([A-Z]{3})\b", location.strip())
+        if m:
+            code = m.group(1)
             if code in cfg.AIRPORT_TO_CITY:
                 return cfg.AIRPORT_TO_CITY[code], code
-            if code in cfg.AIRPORT_CODES.values():
-                rest = re.sub(r"\b" + iata.group(1) + r"\b", "", loc).strip()
-                return (rest.title() if rest else "Unknown"), code
 
-        for name, code in cfg.AIRPORT_CODES.items():
-            if name in loc:
-                city = cfg.AIRPORT_TO_CITY.get(code) or loc.replace(name, "").strip().title()
+        # 1b. Location is exactly a 3-letter code in lowercase ("lhr", "jfk")
+        if re.fullmatch(r"[a-z]{3}", loc):
+            code_upper = loc.upper()
+            if code_upper in cfg.AIRPORT_TO_CITY:
+                return cfg.AIRPORT_TO_CITY[code_upper], code_upper
+
+        # 2. Known multi-word airport/city names — word-boundary match, longest
+        #    first to prefer specific entries over short ambiguous ones.
+        #    3-char keys (bare IATA codes like "san", "del") are excluded here
+        #    to avoid matching them as prefixes of unrelated city names
+        #    ("san" in "San Juan" → San Diego would be wrong).
+        for name, code in sorted(cfg.AIRPORT_CODES.items(), key=lambda x: -len(x[0])):
+            if len(name) <= 3:
+                break  # sorted descending, so all remaining are ≤3 chars
+            if re.search(r"\b" + re.escape(name) + r"\b", loc):
+                city = cfg.AIRPORT_TO_CITY.get(code) or loc_clean.title()
                 return city or "Unknown", code
 
+        # 3. City-to-airport fallback — also word-boundary guarded
         for city_name, code in cfg.CITY_TO_AIRPORT.items():
-            if city_name in loc and len(city_name) > 3:
+            if len(city_name) > 3 and re.search(r"\b" + re.escape(city_name) + r"\b", loc):
                 return city_name.title(), code
 
-        return location.strip().title(), None
+        return loc_clean.title(), None
 
     empty = dict(
-        origin=None, destination=None, transit=None,
-        origin_city=None, origin_airport=None,
-        destination_city=None, destination_airport=None,
-        transit_city=None, transit_airport=None,
+        origin=None,
+        destination=None,
+        transit=None,
+        origin_city=None,
+        origin_airport=None,
+        destination_city=None,
+        destination_airport=None,
+        transit_city=None,
+        transit_airport=None,
     )
 
     if not route or pd.isna(route) or not route.strip():
         return empty
 
     result = dict(empty)
-    r = route.strip()
+    # Normalise whitespace but preserve original case so extract() can detect
+    # uppercase IATA codes written inline by reviewers ("New York JFK").
+    r = re.sub(r"\s+", " ", route.strip())
+    r_lower = r.lower()
 
-    if " via " in r.lower():
-        main, transit_str = r.lower().split(" via ", 1)
-        origin_str, _, dest_str = main.partition(" to ")
-    elif " to " in r.lower():
-        parts = r.lower().split(" to ", 1)
-        origin_str, dest_str, transit_str = parts[0], parts[1], None
+    if " via " in r_lower:
+        via_pos = r_lower.index(" via ")
+        main = r[:via_pos]
+        # Multiple transit stops ("via Frankfurt, Munich, Porto") — take only
+        # the first one; the rest are not stored in the single transit slot.
+        transit_raw = r[via_pos + 5 :].split(",")[0].strip()
+        to_pos = main.lower().find(" to ")
+        origin_str = main[:to_pos].strip() if to_pos != -1 else main.strip()
+        dest_str = main[to_pos + 4 :].strip() if to_pos != -1 else None
+        transit_str = transit_raw or None
+    elif " to " in r_lower:
+        to_pos = r_lower.index(" to ")
+        origin_str = r[:to_pos].strip()
+        dest_str = r[to_pos + 4 :].strip()
+        transit_str = None
     else:
-        origin_str, dest_str, transit_str = r.lower(), None, None
+        origin_str, dest_str, transit_str = r, None, None
 
-    result["origin"] = origin_str.strip().title() if origin_str else None
-    result["destination"] = dest_str.strip().title() if dest_str else None
-    result["transit"] = transit_str.strip().title() if transit_str else None
+    result["origin"] = origin_str.title() if origin_str else None
+    result["destination"] = dest_str.title() if dest_str else None
+    result["transit"] = transit_str.title() if transit_str else None
 
     result["origin_city"], result["origin_airport"] = extract(origin_str)
     if dest_str:
@@ -231,8 +274,14 @@ def _clean_route(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     parsed = df["route"].apply(_parse_route)
-    for key in ["origin_city", "origin_airport", "destination_city",
-                "destination_airport", "transit_city", "transit_airport"]:
+    for key in [
+        "origin_city",
+        "origin_airport",
+        "destination_city",
+        "destination_airport",
+        "transit_city",
+        "transit_airport",
+    ]:
         df[key] = parsed.apply(lambda x: x[key])
 
     for col in ["origin_city", "destination_city", "transit_city"]:
@@ -243,33 +292,120 @@ def _clean_route(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clean_aircraft(df: pd.DataFrame) -> pd.DataFrame:
+    # ICAO/IATA shortcodes → canonical "Manufacturer Model" form
+    _SHORTCODES: dict[str, str] = {
+        "A318": "Airbus A318",
+        "A319": "Airbus A319",
+        "A320": "Airbus A320",
+        "A20N": "Airbus A320neo",
+        "A321": "Airbus A321",
+        "A21N": "Airbus A321neo",
+        "A330": "Airbus A330",
+        "A332": "Airbus A330-200",
+        "A333": "Airbus A330-300",
+        "A339": "Airbus A330neo",
+        "A340": "Airbus A340",
+        "A350": "Airbus A350",
+        "A359": "Airbus A350-900",
+        "A35K": "Airbus A350-1000",
+        "A380": "Airbus A380",
+        "B733": "Boeing 737-300",
+        "B734": "Boeing 737-400",
+        "B735": "Boeing 737-500",
+        "B737": "Boeing 737",
+        "B738": "Boeing 737-800",
+        "B739": "Boeing 737-900",
+        "B744": "Boeing 747-400",
+        "B747": "Boeing 747",
+        "B752": "Boeing 757-200",
+        "B757": "Boeing 757",
+        "B762": "Boeing 767-200",
+        "B763": "Boeing 767-300",
+        "B767": "Boeing 767",
+        "B772": "Boeing 777-200",
+        "B773": "Boeing 777-300",
+        "B77W": "Boeing 777-300ER",
+        "B777": "Boeing 777",
+        "B787": "Boeing 787",
+        "B788": "Boeing 787-8",
+        "B789": "Boeing 787-9",
+        "B78X": "Boeing 787-10",
+        "E145": "Embraer 145",
+        "E170": "Embraer 170",
+        "E175": "Embraer 175",
+        "E190": "Embraer 190",
+        "E195": "Embraer 195",
+    }
+
+    _VALID_EMBRAER = {135, 140, 145, 170, 175, 190, 195}
+
     def clean_entry(entry):
         if pd.isna(entry):
             return None
-        entry = str(entry).replace("\xa0", " ")
-        entry = re.sub(r"\bE-?(\d{3})\b", r"Embraer \1", entry, flags=re.IGNORECASE)
-        entry = re.sub(r"\bEmbraer[- ]?(\d{3})\b", r"Embraer \1", entry, flags=re.IGNORECASE)
-        entry = re.sub(r"\bEmbraerE(\d{3})\b", r"Embraer \1", entry, flags=re.IGNORECASE)
-        entry = re.sub(r"\bEmbraer(\d{3})\b", r"Embraer \1", entry, flags=re.IGNORECASE)
+        entry = str(entry).replace("\xa0", " ").strip()
+        if not entry or entry.upper() in ("UNKNOWN", "N/A", "-"):
+            return None
 
-        if re.match(r".*(Embraer\s(170|190|195)).*", entry, re.IGNORECASE):
-            m = re.match(r".*(Embraer\s(170|190|195)).*", entry, re.IGNORECASE)
-            return f"Embraer {m.group(2)}"
-        if re.match(r".*(Boeing\s7\d{2}).*", entry, re.IGNORECASE):
-            return re.match(r".*(Boeing\s7\d{2}).*", entry, re.IGNORECASE).group(1)
-        short = re.match(r".*\b(B744|B747|B757|B767|B777|B787|B789|B737)\b.*", entry, re.IGNORECASE)
-        if short:
-            return {"B737": "Boeing 737", "B744": "Boeing 744", "B747": "Boeing 747",
-                    "B757": "Boeing 757", "B767": "Boeing 767", "B777": "Boeing 777",
-                    "B787": "Boeing 787", "B789": "Boeing 789"}.get(short.group(1).upper())
-        airbus = re.match(
-            r".*\b(A318|A319|A320|A320NEO|A321|A321NEO|A322|A329|A330|A340|A350|A366|A380)\b.*",
-            entry, re.IGNORECASE,
+        # Multi-aircraft entries ("Boeing 787 / 777", "A330 / Boeing 787", etc.):
+        # take only the first aircraft mentioned so the result is unambiguous.
+        for sep in ("/", "&"):
+            if sep in entry:
+                entry = entry.split(sep)[0].strip()
+        if "," in entry:
+            entry = entry.split(",")[0].strip()
+
+        # Shortcode lookup: normalise to uppercase, strip hyphens/spaces
+        key = entry.upper().replace("-", "").replace(" ", "")
+        if key in _SHORTCODES:
+            return _SHORTCODES[key]
+
+        # Boeing long-form: preserve subvariant when present
+        # Matches "Boeing 737", "Boeing 737-800", "Boeing 777-300ER", "Boeing 777-300 ER",
+        # "Boeing 787-9", "Boeing 737 Max 8"
+        m = re.search(
+            r"\bBoeing\s+(7\d{2})(?:[- ](MAX\s*\d*|\d{1,3}(?:\s*[A-Z]{1,3})*))?(?=\b|$)",
+            entry,
+            re.IGNORECASE,
         )
-        if airbus:
-            return airbus.group(1).upper().replace("NEO", "")
-        if re.match(r".*(Saab\s2000).*", entry, re.IGNORECASE):
+        if m:
+            base = m.group(1)
+            suffix = re.sub(r"\s+", "", m.group(2) or "").upper()
+            return f"Boeing {base}-{suffix}" if suffix else f"Boeing {base}"
+
+        # Airbus NEO/neo variants with various spellings:
+        # "A320neo", "A320 neo", "A320-neo", "A320N", "A321 NEO", etc.
+        m = re.search(r"\bA(3[012]\d)[-\s]*(?:NEO|N)\b", entry, re.IGNORECASE)
+        if m:
+            num = m.group(1)
+            return f"Airbus A{num}neo"
+
+        # Airbus plain (strip subvariants like "-200" for consistency)
+        # Excludes A322/A329/A366 which are not real Airbus types
+        m = re.search(
+            r"\b(?:Airbus\s+)?A(31[89]|32[01]|33[02-9]|34[0-9]|35[0-9]|380)\b",
+            entry,
+            re.IGNORECASE,
+        )
+        if m:
+            return f"Airbus A{m.group(1).upper()}"
+
+        # Embraer: covers 145/170/175/190/195 (previously only 170/190/195)
+        # Handles "Embraer 190", "Embraer E190", "E-190", "E190"
+        m = re.search(
+            r"\b(?:Embraer\s*(?:E[-\s]?)?|E-?)(\d{3})\b",
+            entry,
+            re.IGNORECASE,
+        )
+        if m and int(m.group(1)) in _VALID_EMBRAER:
+            return f"Embraer {m.group(1)}"
+
+        # Other commercial types
+        m = re.search(r"\bATR\s*(\d{2})\b", entry, re.IGNORECASE)
+        if m:
+            return f"ATR {m.group(1)}"
+        if re.search(r"\bSaab\s+2000\b", entry, re.IGNORECASE):
             return "Saab 2000"
+
         return None
 
     df["aircraft"] = df["aircraft"].apply(clean_entry)
@@ -283,6 +419,7 @@ def _reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _add_updated_at(df: pd.DataFrame) -> pd.DataFrame:
     from datetime import datetime
+
     df["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return df
 
@@ -296,7 +433,9 @@ if __name__ == "__main__":
     from datetime import timedelta
 
     parser = argparse.ArgumentParser(description="Clean raw Skytrax reviews")
-    parser.add_argument("--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)")
+    parser.add_argument(
+        "--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)"
+    )
     parser.add_argument("--yesterday", action="store_true", help="Process yesterday's file")
     args = parser.parse_args()
 
