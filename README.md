@@ -68,9 +68,9 @@ s3://skytrax-reviews-landing-<account-id>/
 
 ![S3 Bucket](assets/aws/s3_dir.png)
 
-| Raw files | Processed files |
-| --------- | --------------- |
-| ![S3 Raw](assets/aws/s3_raw.png) | ![S3 Processed](assets/aws/s3_processed.png) |
+![S3 Raw](assets/aws/s3_raw.png)
+
+![S3 Processed](assets/aws/s3_processed.png)
 
 - **Versioning** enabled — protects against accidental overwrites
 - **AES256 encryption** — server-side encryption on all objects
