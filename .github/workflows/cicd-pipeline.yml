@@ -25,7 +25,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Lint
-        run: uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        run: uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv
 
       - name: Run tests
         run: uv run pytest tests/ -v
