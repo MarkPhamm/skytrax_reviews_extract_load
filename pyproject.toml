@@ -26,6 +26,9 @@ package = false   # scripts-only project — uv installs deps but doesn't build/
 [tool.setuptools.packages.find]
 include = ["include*"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.black]
 line-length = 100
 
