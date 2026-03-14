@@ -150,12 +150,16 @@ def _clean_ratings(df: pd.DataFrame) -> pd.DataFrame:
         "seat_comfort",
         "cabin_staff_service",
         "food_and_beverages",
+        "inflight_entertainment",
+        "ground_service",
         "wifi_and_connectivity",
         "value_for_money",
     ]
     for col in rating_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+            s = pd.to_numeric(df[col], errors="coerce")
+            s = s.where(s >= 1, other=pd.NA)  # treat 0 as null
+            df[col] = s.astype("Int64")
     return df
 
 
