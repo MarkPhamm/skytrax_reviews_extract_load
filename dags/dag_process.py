@@ -16,6 +16,7 @@ so you get one task instance per date in the Airflow UI.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -38,7 +39,7 @@ PROCESSED_DATASET = Dataset("skytrax://processed")
 default_args = {
     "owner": "airflow",
     "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(seconds=0),
 }
 
 
@@ -71,16 +72,15 @@ def process_dag():
             / f"raw_data_{review_date.strftime('%Y%m%d')}.csv"
         )
 
-        storage_mode = Variable.get("STORAGE_MODE", default_var="local")
-        if storage_mode == "s3":
-            bucket = Variable.get("S3_BUCKET")
+        if os.getenv("STORAGE_MODE", "local") == "s3":
+            bucket = os.environ["S3_BUCKET"]
             s3_key = raw_s3_key(review_date)
             local_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
                 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
-                conn_id = Variable.get("AWS_CONN_ID", default_var="aws_s3_connection")
+                conn_id = os.getenv("AWS_CONN_ID", "aws_s3_connection")
                 hook = S3Hook(aws_conn_id=conn_id)
                 hook.get_conn().download_file(bucket, s3_key, str(local_path))
             except ImportError:
@@ -116,15 +116,14 @@ def process_dag():
     @task(outlets=[PROCESSED_DATASET])
     def upload_processed(processed_path: str) -> str | None:
         """Upload one processed CSV to S3 (skipped when STORAGE_MODE=local)."""
-        storage_mode = Variable.get("STORAGE_MODE", default_var="local")
-        if storage_mode == "local":
+        if os.getenv("STORAGE_MODE", "local") == "local":
             return None
 
         stem = Path(processed_path).stem  # clean_data_20260312
         date_part = stem.split("_")[-1]
         review_date = date(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:]))
 
-        bucket = Variable.get("S3_BUCKET")
+        bucket = os.environ["S3_BUCKET"]
         return _upload(review_date, bucket=bucket, use_airflow_hook=True)
 
     # ── Wire up ──────────────────────────────────────────────────────────────

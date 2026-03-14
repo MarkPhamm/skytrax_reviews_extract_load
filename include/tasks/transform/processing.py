@@ -92,12 +92,18 @@ def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clean_date_submitted(df: pd.DataFrame) -> pd.DataFrame:
-    df["date_submitted"] = df["date_submitted"].str.replace(
-        r"(\d+)(st|nd|rd|th)", r"\1", regex=True
-    )
-    df["date_submitted"] = pd.to_datetime(df["date_submitted"], format="%d %B %Y").dt.strftime(
-        "%Y-%m-%d"
-    )
+    # Dates may already be ISO-formatted (from split_and_save) or raw ("22nd March 2025").
+    try:
+        df["date_submitted"] = pd.to_datetime(df["date_submitted"], format="%Y-%m-%d").dt.strftime(
+            "%Y-%m-%d"
+        )
+    except (ValueError, TypeError):
+        df["date_submitted"] = df["date_submitted"].str.replace(
+            r"(\d+)(st|nd|rd|th)", r"\1", regex=True
+        )
+        df["date_submitted"] = pd.to_datetime(df["date_submitted"], format="%d %B %Y").dt.strftime(
+            "%Y-%m-%d"
+        )
     return df
 
 

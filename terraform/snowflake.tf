@@ -1,28 +1,28 @@
+# ---------------------------------------------------------------------------
+# Snowflake — Database, Schema, Table, and S3 Stage
+#
+# Terraform owns the infrastructure; Python (dag_snowflake) runs COPY INTO.
+# ---------------------------------------------------------------------------
+
 provider "snowflake" {
-  organization_name = var.snowflake_org
-  account_name      = var.snowflake_account
-  username          = var.snowflake_user
-  # Password / key pulled from SNOWFLAKE_PASSWORD env var by the provider
-  # Never put credentials in .tf files or tfvars — use env vars or a secrets manager
+  organization_name        = var.snowflake_org
+  account_name             = var.snowflake_account
+  user                     = var.snowflake_user
+  authenticator            = "SNOWFLAKE"
+  preview_features_enabled = ["snowflake_table_resource", "snowflake_stage_resource"]
 }
 
 # ---------------------------------------------------------------------------
-# Database + Schemas
+# Database + Schema
 # ---------------------------------------------------------------------------
 
 resource "snowflake_database" "skytrax" {
-  name    = "SKYTRAX_REVIEWS_DB"
-  comment = "Skytrax airline reviews pipeline"
+  name = "SKYTRAX_REVIEWS_DB"
 }
 
 resource "snowflake_schema" "raw" {
   database = snowflake_database.skytrax.name
   name     = "RAW"
-}
-
-resource "snowflake_schema" "model" {
-  database = snowflake_database.skytrax.name
-  name     = "MODEL"
 }
 
 # ---------------------------------------------------------------------------
@@ -34,182 +34,127 @@ resource "snowflake_table" "airline_reviews" {
   schema   = snowflake_schema.raw.name
   name     = "AIRLINE_REVIEWS"
 
+  # Column order matches CSV output from processing pipeline
   column {
-    name = "airline_name"
-    type = "STRING"
-  }
-  column {
-    name = "date_submitted"
-    type = "DATE"
-  }
-  column {
-    name = "customer_name"
-    type = "STRING"
-  }
-  column {
-    name = "nationality"
-    type = "STRING"
-  }
-  column {
-    name = "verify"
+    name = "VERIFY"
     type = "BOOLEAN"
   }
   column {
-    name = "review"
-    type = "STRING"
-  }
-  column {
-    name = "type_of_traveller"
-    type = "STRING"
-  }
-  column {
-    name = "seat_type"
-    type = "STRING"
-  }
-  column {
-    name = "date_flown"
+    name = "DATE_SUBMITTED"
     type = "DATE"
   }
   column {
-    name = "seat_comfort"
-    type = "INT"
+    name = "DATE_FLOWN"
+    type = "DATE"
   }
   column {
-    name = "cabin_staff_service"
-    type = "INT"
+    name = "CUSTOMER_NAME"
+    type = "VARCHAR"
   }
   column {
-    name = "food_and_beverages"
-    type = "INT"
+    name = "NATIONALITY"
+    type = "VARCHAR"
   }
   column {
-    name = "inflight_entertainment"
-    type = "INT"
+    name = "AIRLINE_NAME"
+    type = "VARCHAR"
   }
   column {
-    name = "ground_service"
-    type = "INT"
+    name = "TYPE_OF_TRAVELLER"
+    type = "VARCHAR"
   }
   column {
-    name = "wifi_and_connectivity"
-    type = "INT"
+    name = "SEAT_TYPE"
+    type = "VARCHAR"
   }
   column {
-    name = "value_for_money"
-    type = "INT"
+    name = "AIRCRAFT"
+    type = "VARCHAR"
   }
   column {
-    name = "recommended"
+    name = "ORIGIN_CITY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "ORIGIN_AIRPORT"
+    type = "VARCHAR"
+  }
+  column {
+    name = "DESTINATION_CITY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "DESTINATION_AIRPORT"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TRANSIT_CITY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TRANSIT_AIRPORT"
+    type = "VARCHAR"
+  }
+  column {
+    name = "SEAT_COMFORT"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "CABIN_STAFF_SERVICE"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "FOOD_AND_BEVERAGES"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "INFLIGHT_ENTERTAINMENT"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "GROUND_SERVICE"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "WIFI_AND_CONNECTIVITY"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "VALUE_FOR_MONEY"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "RECOMMENDED"
     type = "BOOLEAN"
   }
   column {
-    name = "aircraft"
-    type = "STRING"
+    name = "REVIEW"
+    type = "VARCHAR"
   }
   column {
-    name = "origin_city"
-    type = "STRING"
-  }
-  column {
-    name = "origin_airport"
-    type = "STRING"
-  }
-  column {
-    name = "destination_city"
-    type = "STRING"
-  }
-  column {
-    name = "destination_airport"
-    type = "STRING"
-  }
-  column {
-    name = "transit_city"
-    type = "STRING"
-  }
-  column {
-    name = "transit_airport"
-    type = "STRING"
-  }
-  column {
-    name = "updated_at"
+    name = "UPDATED_AT"
     type = "TIMESTAMP_NTZ"
   }
 }
 
 # ---------------------------------------------------------------------------
-# S3 Storage Integration (lets Snowflake assume the Airflow IAM role)
-# ---------------------------------------------------------------------------
-
-resource "snowflake_storage_integration" "s3" {
-  name    = "SKYTRAX_S3_INTEGRATION"
-  type    = "EXTERNAL_STAGE"
-  enabled = true
-
-  storage_provider          = "S3"
-  storage_aws_role_arn      = aws_iam_role.airflow.arn
-  storage_allowed_locations = ["s3://${aws_s3_bucket.landing.id}/"]
-}
-
-# ---------------------------------------------------------------------------
-# External Stage
+# S3 External Stage
 # ---------------------------------------------------------------------------
 
 resource "snowflake_stage" "s3" {
   database = snowflake_database.skytrax.name
   schema   = snowflake_schema.raw.name
   name     = "SKYTRAX_S3_STAGE"
-  url      = "s3://${aws_s3_bucket.landing.id}/"
+  url      = "s3://${var.bucket_name}/"
 
-  storage_integration = snowflake_storage_integration.s3.name
+  credentials = "AWS_ROLE = '${aws_iam_role.airflow.arn}'"
 
   file_format = <<-EOF
-    TYPE                           = 'CSV'
-    FIELD_OPTIONALLY_ENCLOSED_BY  = '"'
-    SKIP_HEADER                   = 1
-    FIELD_DELIMITER               = ','
-    NULL_IF                       = ('', 'NULL', 'None')
+    TYPE                         = 'CSV'
+    FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+    SKIP_HEADER                  = 1
+    FIELD_DELIMITER              = ','
+    NULL_IF                      = ('', 'NULL', 'None')
     ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE
   EOF
-}
-
-# ---------------------------------------------------------------------------
-# Trust policy update — Snowflake needs permission to assume the Airflow role
-#
-# After `terraform apply`, Snowflake generates a unique AWS principal
-# (snowflake_storage_integration.s3.storage_aws_iam_user_arn) that must be
-# added to the Airflow role's trust policy.  This extra statement does that.
-# ---------------------------------------------------------------------------
-
-data "aws_iam_policy_document" "airflow_assume_role_with_snowflake" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "AWS"
-      identifiers = [var.airflow_trusted_arn]
-    }
-  }
-
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "AWS"
-      identifiers = [snowflake_storage_integration.s3.storage_aws_iam_user_arn]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "sts:ExternalId"
-      values   = [snowflake_storage_integration.s3.storage_aws_external_id]
-    }
-  }
-}
-
-resource "aws_iam_role" "airflow_snowflake_trust" {
-  name               = aws_iam_role.airflow.name
-  assume_role_policy = data.aws_iam_policy_document.airflow_assume_role_with_snowflake.json
-
-  lifecycle {
-    create_before_destroy = true
-  }
 }

@@ -13,10 +13,21 @@ output "airflow_role_arn" {
   value       = aws_iam_role.airflow.arn
 }
 
-output "analyst_role_arn" {
-  description = "ARN of the analyst read-only IAM role"
-  value       = aws_iam_role.analyst.arn
+output "airflow_access_key_id" {
+  description = "Access key ID for the Airflow IAM user"
+  value       = aws_iam_access_key.airflow.id
 }
+
+output "airflow_secret_access_key" {
+  description = "Secret access key for the Airflow IAM user"
+  value       = aws_iam_access_key.airflow.secret
+  sensitive   = true
+}
+
+# output "analyst_role_arn" {
+#   description = "ARN of the analyst read-only IAM role"
+#   value       = aws_iam_role.analyst.arn
+# }
 
 output "snowflake_stage_name" {
   description = "Fully-qualified Snowflake stage name"

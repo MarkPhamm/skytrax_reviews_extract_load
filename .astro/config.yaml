@@ -1,2 +1,6 @@
+api-server:
+    port: "8081"
 project:
     name: skytrax-reviews
+webserver:
+    port: "8081"

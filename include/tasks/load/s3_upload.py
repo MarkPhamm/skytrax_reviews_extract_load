@@ -86,7 +86,7 @@ def _get_s3_client(use_airflow_hook: bool = False):
             from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
             hook = S3Hook(aws_conn_id=AWS_CONN_ID)
-            return hook.get_client_type("s3")
+            return hook.get_conn()
         except ImportError:
             logger.debug("Airflow not available — falling back to boto3 default chain")
 

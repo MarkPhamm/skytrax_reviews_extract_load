@@ -12,7 +12,10 @@ data "aws_iam_policy_document" "airflow_assume_role" {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "AWS"
-      identifiers = [var.airflow_trusted_arn]
+      identifiers = [
+        "arn:aws:iam::203110101827:root",
+        "arn:aws:iam::612990353424:user/651j1000-s",
+      ]
     }
   }
 }
@@ -56,4 +59,38 @@ resource "aws_iam_policy" "airflow_s3" {
 resource "aws_iam_role_policy_attachment" "airflow_s3" {
   role       = aws_iam_role.airflow.name
   policy_arn = aws_iam_policy.airflow_s3.arn
+}
+
+# ---------------------------------------------------------------------------
+# IAM User — Airflow (programmatic access)
+#
+# This user's only permission is to assume the role above.
+# Generate access keys for use in the Airflow AWS connection.
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_user" "airflow" {
+  name = "skytrax-airflow-${var.environment}"
+}
+
+data "aws_iam_policy_document" "airflow_assume" {
+  statement {
+    effect    = "Allow"
+    actions   = ["sts:AssumeRole"]
+    resources = [aws_iam_role.airflow.arn]
+  }
+}
+
+resource "aws_iam_user_policy" "airflow_assume" {
+  name   = "assume-airflow-role"
+  user   = aws_iam_user.airflow.name
+  policy = data.aws_iam_policy_document.airflow_assume.json
+}
+
+resource "aws_iam_user_policy_attachment" "airflow_s3_direct" {
+  user       = aws_iam_user.airflow.name
+  policy_arn = aws_iam_policy.airflow_s3.arn
+}
+
+resource "aws_iam_access_key" "airflow" {
+  user = aws_iam_user.airflow.name
 }

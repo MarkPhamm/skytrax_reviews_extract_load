@@ -18,6 +18,7 @@ Params:
 from __future__ import annotations
 
 import json
+import os
 import string
 from datetime import date, datetime, timedelta
 
@@ -34,7 +35,7 @@ RAW_DATASET = Dataset("skytrax://raw")
 default_args = {
     "owner": "airflow",
     "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(seconds=0),
 }
 
 
@@ -136,11 +137,10 @@ def crawl_dag():
     @task(outlets=[RAW_DATASET])
     def upload_raw(written_dates: list[str]) -> list[str]:
         """Upload all date-partitioned raw CSVs to S3 (skipped when STORAGE_MODE=local)."""
-        storage_mode = Variable.get("STORAGE_MODE", default_var="local")
-        if storage_mode == "local":
+        if os.getenv("STORAGE_MODE", "local") == "local":
             return []
 
-        bucket = Variable.get("S3_BUCKET")
+        bucket = os.environ["S3_BUCKET"]
         uris = []
         for date_str in written_dates:
             uri = _upload(

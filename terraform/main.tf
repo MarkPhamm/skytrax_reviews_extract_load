@@ -6,8 +6,8 @@ terraform {
       version = "~> 5.0"
     }
     snowflake = {
-      source  = "Snowflake-Labs/snowflake"
-      version = "~> 0.90"
+      source  = "snowflakedb/snowflake"
+      version = "~> 1.0"
     }
   }
   # Uncomment for remote state (prod):
@@ -19,7 +19,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = "terraform-admin"
   default_tags {
     tags = {
       Project     = "skytrax-reviews"

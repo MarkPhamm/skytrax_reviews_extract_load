@@ -3,9 +3,8 @@ DAG: skytrax_snowflake
 
 Triggered automatically when dag_process emits PROCESSED_DATASET.
 
-Steps:
-  1. setup        — create DB / schema / table / S3 stage (idempotent)
-  2. load_date    — COPY INTO for each review date (dynamically mapped)
+Infrastructure (database, schema, table, stage) is managed by Terraform.
+This DAG only runs COPY INTO for each review date.
 
 STORAGE_MODE=local skips this DAG entirely — no Snowflake needed for local dev.
 """
@@ -13,20 +12,21 @@ STORAGE_MODE=local skips this DAG entirely — no Snowflake needed for local dev
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime, timedelta
 
 from airflow.datasets import Dataset
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
-from include.tasks.load.snowflake_load import copy_into, ensure_stage, ensure_table
+from include.tasks.load.snowflake_load import copy_into
 
 PROCESSED_DATASET = Dataset("skytrax://processed")
 
 default_args = {
     "owner": "airflow",
     "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(seconds=0),
 }
 
 
@@ -42,25 +42,9 @@ default_args = {
 def snowflake_dag():
 
     @task()
-    def check_storage_mode() -> str:
-        return Variable.get("STORAGE_MODE", default_var="local")
-
-    @task()
-    def setup(storage_mode: str) -> None:
-        """Create table + S3 stage. Skipped when local."""
-        if storage_mode == "local":
-            return
-
-        ensure_table()
-        ensure_stage(
-            bucket=Variable.get("S3_BUCKET"),
-            role_arn=Variable.get("SNOWFLAKE_ROLE_ARN"),
-        )
-
-    @task()
-    def get_dates(storage_mode: str) -> list[str]:
+    def get_dates() -> list[str]:
         """Read the date list written by dag_crawl. Returns [] when local."""
-        if storage_mode == "local":
+        if os.getenv("STORAGE_MODE", "local") == "local":
             return []
 
         raw = Variable.get("LAST_CRAWL_DATES", default_var="[]")
@@ -73,9 +57,7 @@ def snowflake_dag():
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 
-    storage_mode = check_storage_mode()
-    setup(storage_mode)
-    dates = get_dates(storage_mode)
+    dates = get_dates()
     load_date.expand(date_str=dates)
 
 

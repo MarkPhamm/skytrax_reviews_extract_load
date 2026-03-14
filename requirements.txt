@@ -1,7 +1,9 @@
 pandas>=2.0.0
 requests
 beautifulsoup4
+apache-airflow-providers-amazon>=8.0.0
 boto3==1.35.0
+apache-airflow-providers-snowflake>=5.0.0
 snowflake-connector-python
 Unidecode
 openpyxl
