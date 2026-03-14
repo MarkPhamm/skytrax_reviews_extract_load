@@ -59,11 +59,13 @@ def processed_local_path(run_date: date) -> Path:
 
 
 def raw_s3_key(run_date: date) -> str:
-    return f"raw/{run_date.strftime('%Y')}/{run_date.strftime('%m')}/raw_data_{run_date.strftime('%Y%m%d')}.csv"
+    y, m = run_date.strftime("%Y"), run_date.strftime("%m")
+    return f"raw/{y}/{m}/raw_data_{run_date.strftime('%Y%m%d')}.csv"
 
 
 def processed_s3_key(run_date: date) -> str:
-    return f"processed/{run_date.strftime('%Y')}/{run_date.strftime('%m')}/clean_data_{run_date.strftime('%Y%m%d')}.csv"
+    y, m = run_date.strftime("%Y"), run_date.strftime("%m")
+    return f"processed/{y}/{m}/clean_data_{run_date.strftime('%Y%m%d')}.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -183,11 +185,15 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
     parser = argparse.ArgumentParser(description="Upload landing files to S3")
-    parser.add_argument("--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)")
+    parser.add_argument(
+        "--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)"
+    )
     parser.add_argument("--yesterday", action="store_true", help="Upload yesterday's files")
     parser.add_argument("--bucket", default=None, help="Override S3_BUCKET env var")
     parser.add_argument("--raw-only", action="store_true", help="Upload only the raw file")
-    parser.add_argument("--processed-only", action="store_true", help="Upload only the processed file")
+    parser.add_argument(
+        "--processed-only", action="store_true", help="Upload only the processed file"
+    )
     args = parser.parse_args()
 
     run_date = args.date or (date.today() - timedelta(days=1) if args.yesterday else date.today())

@@ -27,12 +27,14 @@ def _read_sql(filename: str) -> str:
 
 def _get_hook(conn_id: str = "snowflake_default"):
     from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+
     return SnowflakeHook(snowflake_conn_id=conn_id)
 
 
 # ---------------------------------------------------------------------------
 # One-time setup — idempotent, safe to call on every run
 # ---------------------------------------------------------------------------
+
 
 def ensure_table(conn_id: str = "snowflake_default") -> None:
     """Create DB, schema, and table if they don't exist."""
@@ -58,6 +60,7 @@ def ensure_stage(bucket: str, role_arn: str, conn_id: str = "snowflake_default")
 # ---------------------------------------------------------------------------
 # Per-date load
 # ---------------------------------------------------------------------------
+
 
 def copy_into(review_date: date, conn_id: str = "snowflake_default") -> None:
     """COPY INTO Snowflake for one review date's processed CSV."""

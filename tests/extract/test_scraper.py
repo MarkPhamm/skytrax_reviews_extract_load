@@ -6,7 +6,6 @@ Run with:  pytest tests/extract/test_scraper.py -v
 
 import textwrap
 from datetime import date
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -14,7 +13,6 @@ import pytest
 from bs4 import BeautifulSoup
 
 from include.tasks.extract.scraper import AllAirlineReviewScraper, get_output_path
-
 
 # ---------------------------------------------------------------------------
 # get_output_path
@@ -40,7 +38,9 @@ def test_get_output_path_ends_in_landing(tmp_path, monkeypatch):
     monkeypatch.setenv("LANDING_DIR", str(tmp_path))
     # Re-import to pick up the new env var value
     import importlib
+
     import include.tasks.extract.scraper as mod
+
     importlib.reload(mod)
     path = mod.get_output_path(date(2025, 6, 15))
     assert path.is_relative_to(tmp_path)
@@ -50,14 +50,16 @@ def test_get_output_path_ends_in_landing(tmp_path, monkeypatch):
 # AllAirlineReviewScraper.get_all_airline_urls
 # ---------------------------------------------------------------------------
 
-_AZ_HTML = textwrap.dedent("""\
+_AZ_HTML = textwrap.dedent(
+    """\
     <html><body>
       <a href="/airline-reviews/british-airways">British Airways</a>
       <a href="/airline-reviews/lufthansa">Lufthansa</a>
       <a href="/airline-reviews/">All Reviews</a>
       <a href="/something-else">Ignore me</a>
     </body></html>
-""")
+"""
+)
 
 
 def _mock_response(html: str, status: int = 200) -> MagicMock:
@@ -86,12 +88,14 @@ def test_get_all_airline_urls_returns_airlines(mock_get):
 
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_get_all_airline_urls_deduplicates(mock_get):
-    duplicate_html = textwrap.dedent("""\
+    duplicate_html = textwrap.dedent(
+        """\
         <html><body>
           <a href="/airline-reviews/british-airways">British Airways</a>
           <a href="/airline-reviews/british-airways">British Airways</a>
         </body></html>
-    """)
+    """
+    )
     mock_get.return_value = _mock_response(duplicate_html)
     scraper = AllAirlineReviewScraper()
     airlines = scraper.get_all_airline_urls()
@@ -109,6 +113,7 @@ def test_get_all_airline_urls_respects_max(mock_get):
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_get_all_airline_urls_returns_empty_on_error(mock_get):
     import requests as req
+
     mock_get.side_effect = req.RequestException("timeout")
     scraper = AllAirlineReviewScraper()
     assert scraper.get_all_airline_urls() == []
@@ -118,7 +123,8 @@ def test_get_all_airline_urls_returns_empty_on_error(mock_get):
 # AllAirlineReviewScraper.extract_review_data
 # ---------------------------------------------------------------------------
 
-_REVIEW_HTML = textwrap.dedent("""\
+_REVIEW_HTML = textwrap.dedent(
+    """\
     <article class="comp comp_media-review-rated">
       <time itemprop="datePublished">2024-11-01</time>
       <span itemprop="name">John Doe</span>
@@ -141,7 +147,8 @@ _REVIEW_HTML = textwrap.dedent("""\
         </tr>
       </table>
     </article>
-""")
+"""
+)
 
 
 def test_extract_review_data_fields():
@@ -186,7 +193,8 @@ def test_extract_review_data_missing_table():
 # AllAirlineReviewScraper.scrape_airline_reviews
 # ---------------------------------------------------------------------------
 
-_PAGE_HTML = textwrap.dedent("""\
+_PAGE_HTML = textwrap.dedent(
+    """\
     <html><body>
       <article class="comp comp_media-review-rated">
         <time itemprop="datePublished">2024-01-10</time>
@@ -194,7 +202,8 @@ _PAGE_HTML = textwrap.dedent("""\
         <div itemprop="reviewBody">Good flight</div>
       </article>
     </body></html>
-""")
+"""
+)
 
 _EMPTY_PAGE_HTML = "<html><body></body></html>"
 
@@ -206,7 +215,9 @@ def test_scrape_airline_reviews_returns_reviews(mock_get):
         _mock_response(_EMPTY_PAGE_HTML),  # page 2 → no articles → stop
     ]
     scraper = AllAirlineReviewScraper(num_pages_per_airline=5)
-    reviews = scraper.scrape_airline_reviews("Test Air", "https://example.com/airline-reviews/test-air")
+    reviews = scraper.scrape_airline_reviews(
+        "Test Air", "https://example.com/airline-reviews/test-air"
+    )
 
     assert len(reviews) == 1
     assert reviews[0]["customer_name"] == "Alice"
@@ -216,9 +227,12 @@ def test_scrape_airline_reviews_returns_reviews(mock_get):
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_scrape_airline_reviews_skips_failed_pages(mock_get):
     import requests as req
+
     mock_get.side_effect = req.RequestException("connection error")
     scraper = AllAirlineReviewScraper(num_pages_per_airline=2)
-    reviews = scraper.scrape_airline_reviews("Test Air", "https://example.com/airline-reviews/test-air")
+    reviews = scraper.scrape_airline_reviews(
+        "Test Air", "https://example.com/airline-reviews/test-air"
+    )
     assert reviews == []
 
 
@@ -226,6 +240,7 @@ def test_scrape_airline_reviews_skips_failed_pages(mock_get):
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_scrape_airline_reviews_retries_on_timeout(mock_get, mock_sleep):
     import requests as req
+
     # First two calls timeout, third succeeds
     mock_get.side_effect = [
         req.Timeout("timed out"),
@@ -234,7 +249,9 @@ def test_scrape_airline_reviews_retries_on_timeout(mock_get, mock_sleep):
         _mock_response(_EMPTY_PAGE_HTML),
     ]
     scraper = AllAirlineReviewScraper(num_pages_per_airline=2)
-    reviews = scraper.scrape_airline_reviews("Test Air", "https://example.com/airline-reviews/test-air")
+    reviews = scraper.scrape_airline_reviews(
+        "Test Air", "https://example.com/airline-reviews/test-air"
+    )
     assert len(reviews) == 1
     assert mock_sleep.call_count == 2  # slept between retries
 
@@ -249,11 +266,11 @@ def test_scrape_all_airlines_saves_csv(mock_get, tmp_path, monkeypatch):
     monkeypatch.setattr("include.tasks.extract.scraper.LANDING_DIR", tmp_path)
 
     mock_get.side_effect = [
-        _mock_response(_AZ_HTML),            # A-Z page
-        _mock_response(_PAGE_HTML),           # BA page 1
-        _mock_response(_EMPTY_PAGE_HTML),     # BA page 2 → stop
-        _mock_response(_PAGE_HTML),           # Lufthansa page 1
-        _mock_response(_EMPTY_PAGE_HTML),     # Lufthansa page 2 → stop
+        _mock_response(_AZ_HTML),  # A-Z page
+        _mock_response(_PAGE_HTML),  # BA page 1
+        _mock_response(_EMPTY_PAGE_HTML),  # BA page 2 → stop
+        _mock_response(_PAGE_HTML),  # Lufthansa page 1
+        _mock_response(_EMPTY_PAGE_HTML),  # Lufthansa page 2 → stop
     ]
 
     scraper = AllAirlineReviewScraper(num_pages_per_airline=5, run_date=date(2025, 3, 27))

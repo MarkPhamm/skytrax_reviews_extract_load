@@ -5,13 +5,11 @@ Run with:  pytest tests/load/test_s3_upload.py -v
 """
 
 from datetime import date
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import include.tasks.load.s3_upload as mod
-
 
 # ---------------------------------------------------------------------------
 # Path helpers

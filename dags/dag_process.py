@@ -15,10 +15,22 @@ so you get one task instance per date in the Airflow UI.
 
 from __future__ import annotations
 
+import json
+import tempfile
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-from airflow.decorators import dag, task
+import boto3
+import pandas as pd
 from airflow.datasets import Dataset
+from airflow.decorators import dag, task
+from airflow.models import Variable
+
+from include.tasks.extract.scraper import LANDING_DIR
+from include.tasks.load.s3_upload import raw_s3_key
+from include.tasks.load.s3_upload import upload_processed as _upload
+from include.tasks.transform.processing import clean as _clean
+from include.tasks.transform.processing import get_output_path
 
 RAW_DATASET = Dataset("skytrax://raw")
 PROCESSED_DATASET = Dataset("skytrax://processed")
@@ -44,18 +56,12 @@ def process_dag():
     @task()
     def get_dates_to_process() -> list[str]:
         """Read the date list written by dag_crawl."""
-        import json
-        from airflow.models import Variable
-
         raw = Variable.get("LAST_CRAWL_DATES", default_var="[]")
         return json.loads(raw)
 
     @task()
     def download_raw(date_str: str) -> str:
         """S3 mode: pull raw CSV from S3. Local mode: already on disk."""
-        from airflow.models import Variable
-        from include.tasks.extract.scraper import LANDING_DIR
-
         review_date = date.fromisoformat(date_str)
         local_path = (
             LANDING_DIR
@@ -67,19 +73,17 @@ def process_dag():
 
         storage_mode = Variable.get("STORAGE_MODE", default_var="local")
         if storage_mode == "s3":
-            from include.tasks.load.s3_upload import raw_s3_key
-
             bucket = Variable.get("S3_BUCKET")
             s3_key = raw_s3_key(review_date)
             local_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
                 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+
                 conn_id = Variable.get("AWS_CONN_ID", default_var="aws_s3_connection")
                 hook = S3Hook(aws_conn_id=conn_id)
                 hook.get_conn().download_file(bucket, s3_key, str(local_path))
             except ImportError:
-                import boto3
                 boto3.client("s3").download_file(bucket, s3_key, str(local_path))
 
         if not local_path.exists():
@@ -90,14 +94,9 @@ def process_dag():
     @task()
     def clean_date(raw_path: str) -> str:
         """Run the full cleaning pipeline for one date's raw CSV."""
-        import tempfile
-        import pandas as pd
-        from pathlib import Path
-        from include.tasks.transform.processing import clean as _clean, get_output_path
-
         # Derive review date from the raw filename: raw_data_YYYYMMDD.csv
-        stem = Path(raw_path).stem          # raw_data_20260312
-        date_part = stem.split("_")[-1]     # 20260312
+        stem = Path(raw_path).stem  # raw_data_20260312
+        date_part = stem.split("_")[-1]  # 20260312
         review_date = date(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:]))
 
         # Filter scraper junk before cleaning
@@ -117,15 +116,11 @@ def process_dag():
     @task(outlets=[PROCESSED_DATASET])
     def upload_processed(processed_path: str) -> str | None:
         """Upload one processed CSV to S3 (skipped when STORAGE_MODE=local)."""
-        from pathlib import Path
-        from airflow.models import Variable
-        from include.tasks.load.s3_upload import upload_processed as _upload
-
         storage_mode = Variable.get("STORAGE_MODE", default_var="local")
         if storage_mode == "local":
             return None
 
-        stem = Path(processed_path).stem        # clean_data_20260312
+        stem = Path(processed_path).stem  # clean_data_20260312
         date_part = stem.split("_")[-1]
         review_date = date(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:]))
 

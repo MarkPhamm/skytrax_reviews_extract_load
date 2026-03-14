@@ -1,7 +1,7 @@
 """
 DAG: skytrax_crawl
 
-Scrapes all airlines from airlinequality.com, grouped A–Z (26 parallel tasks).
+Scrapes all airlines from airlinequality.com, grouped A-Z (26 parallel tasks).
 Reviews are split by their actual review date and written as individual CSVs:
 
   landing/raw/YYYY/MM/raw_data_YYYYMMDD.csv  (one file per review date)
@@ -11,18 +11,23 @@ Daily incremental runs produce only yesterday's file.
 
 Params:
   full_scrape (bool, default False):
-    False → incremental: only fetch reviews posted yesterday
-    True  → full scrape: fetch all pages (use for initial load)
+    False -> incremental: only fetch reviews posted yesterday
+    True  -> full scrape: fetch all pages (use for initial load)
 """
 
 from __future__ import annotations
 
+import json
 import string
 from datetime import date, datetime, timedelta
 
-from airflow.decorators import dag, task
+import pandas as pd
 from airflow.datasets import Dataset
+from airflow.decorators import dag, task
 from airflow.models import Param, Variable
+
+from include.tasks.extract.scraper import LANDING_DIR, AllAirlineReviewScraper
+from include.tasks.load.s3_upload import upload_raw as _upload
 
 RAW_DATASET = Dataset("skytrax://raw")
 
@@ -45,7 +50,10 @@ default_args = {
         "full_scrape": Param(
             False,
             type="boolean",
-            description="True = full re-scrape all pages (initial load). False = yesterday only (daily incremental).",
+            description=(
+                "True = full re-scrape all pages (initial load)."
+                " False = yesterday only (daily incremental)."
+            ),
         ),
     },
 )
@@ -53,8 +61,6 @@ def crawl_dag():
 
     @task()
     def get_airline_urls() -> list[tuple[str, str]]:
-        from include.tasks.extract.scraper import AllAirlineReviewScraper
-
         scraper = AllAirlineReviewScraper()
         return scraper.get_all_airline_urls()
 
@@ -65,13 +71,7 @@ def crawl_dag():
         **context,
     ) -> list[dict]:
         """Scrape all airlines whose name starts with `letter`."""
-        from include.tasks.extract.scraper import AllAirlineReviewScraper
-
-        subset = [
-            (name, url)
-            for name, url in airline_urls
-            if name.upper().startswith(letter)
-        ]
+        subset = [(name, url) for name, url in airline_urls if name.upper().startswith(letter)]
         if not subset:
             return []
 
@@ -100,11 +100,6 @@ def crawl_dag():
           ["2010-03-15", "2010-03-16", ..., "2026-03-12"]
         These are passed to dag_process via an Airflow Variable.
         """
-        import json
-
-        import pandas as pd
-        from include.tasks.extract.scraper import LANDING_DIR
-
         flat = [r for letter_reviews in all_reviews for r in letter_reviews]
         if not flat:
             raise RuntimeError("No reviews scraped across all letters — aborting.")
@@ -113,9 +108,10 @@ def crawl_dag():
 
         # Normalise the date column to YYYY-MM-DD so we can group by it.
         # Raw dates come as "22nd March 2025" — strip ordinal suffixes first.
-        import re
         cleaned = df["date"].str.replace(r"(\d+)(st|nd|rd|th)", r"\1", regex=True)
-        df["date"] = pd.to_datetime(cleaned, format="%d %B %Y", errors="coerce").dt.strftime("%Y-%m-%d")
+        df["date"] = pd.to_datetime(cleaned, format="%d %B %Y", errors="coerce").dt.strftime(
+            "%Y-%m-%d"
+        )
         df = df.dropna(subset=["date"])
 
         written_dates = []
@@ -140,8 +136,6 @@ def crawl_dag():
     @task(outlets=[RAW_DATASET])
     def upload_raw(written_dates: list[str]) -> list[str]:
         """Upload all date-partitioned raw CSVs to S3 (skipped when STORAGE_MODE=local)."""
-        from include.tasks.load.s3_upload import upload_raw as _upload
-
         storage_mode = Variable.get("STORAGE_MODE", default_var="local")
         if storage_mode == "local":
             return []
@@ -149,7 +143,11 @@ def crawl_dag():
         bucket = Variable.get("S3_BUCKET")
         uris = []
         for date_str in written_dates:
-            uri = _upload(date.fromisoformat(date_str), bucket=bucket, use_airflow_hook=True)
+            uri = _upload(
+                date.fromisoformat(date_str),
+                bucket=bucket,
+                use_airflow_hook=True,
+            )
             if uri:
                 uris.append(uri)
         return uris

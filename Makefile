@@ -53,6 +53,25 @@ upload:
 upload-local:
 	STORAGE_MODE=local $(PYTHON) include/tasks/load/s3_upload.py --yesterday
 
+# ── Lint ──────────────────────────────────────────────────────────────────────
+
+## Run all linters (isort, black, flake8)
+lint:
+	$(PYTHON) -m isort --check --diff dags/ include/ tests/
+	$(PYTHON) -m black --check dags/ include/ tests/
+	$(PYTHON) -m flake8 --max-line-length 100 --extend-ignore E203 dags/ include/ tests/
+
+## Auto-fix lint issues (isort + black)
+lint-fix:
+	$(PYTHON) -m isort dags/ include/ tests/
+	$(PYTHON) -m black dags/ include/ tests/
+
+## Install the pre-commit git hook
+install-hooks:
+	cp scripts/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hook installed."
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 ## Run all unit tests
@@ -63,4 +82,4 @@ test:
 test-scraper:
 	uv run pytest tests/extract/test_scraper.py -v
 
-.PHONY: dev-setup scrape-smoke scrape process-yesterday process test test-scraper
+.PHONY: dev-setup scrape-smoke scrape process-yesterday process lint lint-fix install-hooks test test-scraper

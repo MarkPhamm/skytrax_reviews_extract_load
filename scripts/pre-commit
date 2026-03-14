@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint Python files with isort, black, and flake8.
+# Runs only on staged .py files to keep commits fast.
+#
+# Install:  cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#   — or —  make install-hooks
+
+# Collect staged Python files (excluding deleted ones)
+STAGED=$(git diff --cached --name-only --diff-filter=d -- '*.py')
+
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+echo "Running lint checks on staged Python files..."
+
+FAILED=0
+
+# isort — import ordering
+if ! python -m isort --check --diff $STAGED 2>/dev/null; then
+    echo "isort: imports are not sorted. Run 'python -m isort <files>' to fix."
+    FAILED=1
+fi
+
+# black — formatting
+if ! python -m black --check --quiet $STAGED 2>/dev/null; then
+    echo "black: formatting issues found. Run 'python -m black <files>' to fix."
+    FAILED=1
+fi
+
+# flake8 — lint errors
+if ! python -m flake8 --max-line-length 100 --extend-ignore E203 $STAGED 2>/dev/null; then
+    echo "flake8: lint errors found. Fix them before committing."
+    FAILED=1
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    exit 1
+fi
+
+echo "All lint checks passed."

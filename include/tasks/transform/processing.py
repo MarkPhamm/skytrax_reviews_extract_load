@@ -12,7 +12,7 @@ difference is whether landing/ is a local directory or a mounted volume.
 import logging
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
@@ -418,8 +418,6 @@ def _reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _add_updated_at(df: pd.DataFrame) -> pd.DataFrame:
-    from datetime import datetime
-
     df["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return df
 

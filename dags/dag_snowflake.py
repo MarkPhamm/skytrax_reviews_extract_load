@@ -12,10 +12,14 @@ STORAGE_MODE=local skips this DAG entirely — no Snowflake needed for local dev
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 
-from airflow.decorators import dag, task
 from airflow.datasets import Dataset
+from airflow.decorators import dag, task
+from airflow.models import Variable
+
+from include.tasks.load.snowflake_load import copy_into, ensure_stage, ensure_table
 
 PROCESSED_DATASET = Dataset("skytrax://processed")
 
@@ -39,7 +43,6 @@ def snowflake_dag():
 
     @task()
     def check_storage_mode() -> str:
-        from airflow.models import Variable
         return Variable.get("STORAGE_MODE", default_var="local")
 
     @task()
@@ -47,9 +50,6 @@ def snowflake_dag():
         """Create table + S3 stage. Skipped when local."""
         if storage_mode == "local":
             return
-
-        from airflow.models import Variable
-        from include.tasks.load.snowflake_load import ensure_table, ensure_stage
 
         ensure_table()
         ensure_stage(
@@ -60,9 +60,6 @@ def snowflake_dag():
     @task()
     def get_dates(storage_mode: str) -> list[str]:
         """Read the date list written by dag_crawl. Returns [] when local."""
-        import json
-        from airflow.models import Variable
-
         if storage_mode == "local":
             return []
 
@@ -72,7 +69,6 @@ def snowflake_dag():
     @task()
     def load_date(date_str: str) -> None:
         """COPY INTO Snowflake for one review date."""
-        from include.tasks.load.snowflake_load import copy_into
         copy_into(date.fromisoformat(date_str))
 
     # ── Wire up ──────────────────────────────────────────────────────────────

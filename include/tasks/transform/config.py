@@ -300,6 +300,7 @@ AIRPORT_CODES = {
     "hong kong": "HKG",
     "hkg": "HKG",
     "seoul": "ICN",
+    "incheon": "ICN",
     "icn": "ICN",
     "kuala lumpur": "KUL",
     "kul": "KUL",
@@ -504,7 +505,6 @@ AIRPORT_CODES = {
     "catania": "CTA",
     "santorini": "JTR",
     "rotterdam": "RTM",
-    "seoul": "SEL",
     "salzburg": "SZG",
     "st kitts": "SKB",
     "granada": "GRX",
@@ -640,35 +640,9 @@ CITY_TO_AIRPORT = {
     "catania": "CTA",
     "santorini": "JTR",
     "rotterdam": "RTM",
-    "seoul": "SEL",
     "salzburg": "SZG",
     "st kitts": "SKB",
     "granada": "GRX",
-}
-
-# Standardize city names
-city_replacements = {
-    "Abuja Nigeria": "Abuja",
-    "Abuja, Nigeria": "Abuja",
-    "Bangalore": "Bengaluru",
-    "Belfast City": "Belfast",
-    "Berlin Schönefeld": "Berlin",
-    "Berlin Tegel": "Berlin",
-    "Dusseldorf": "Düsseldorf",
-    "Duesseldorf": "Düsseldorf",
-    "İStanbul": "Istanbul",
-    "Larnaca": "Larnaca",
-    "Montréal": "Montreal",
-    "Palma De Mallorca": "Palma",
-    "Palma de Mallorca": "Palma",
-    "Rio De Janiero": "Rio de Janeiro",
-    "St Lucia": "Saint Lucia",
-    "St. Lucia": "Saint Lucia",
-    "St Petersburg": "St. Petersburg",
-    "St Petersburgh": "St. Petersburg",
-    "Washington Dc": "Washington",
-    "Washington Dulles": "Washington",
-    "Zürich": "Zurich",
 }
 
 # Standardize city names

@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Project root is 3 dirs above this file:
-# include/tasks/extract/scraper.py -> include/tasks/extract -> include/tasks -> include -> project_root
+# include/tasks/extract/scraper.py -> ... -> project_root
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 LANDING_DIR = Path(os.getenv("LANDING_DIR", _PROJECT_ROOT / "landing"))
@@ -136,7 +136,13 @@ class AllAirlineReviewScraper:
                 except requests.Timeout:
                     wait = attempt * 5  # 5s, 10s, 15s
                     if attempt < 3:
-                        logger.warning("Timeout %s page %d (attempt %d) — retrying in %ds", airline_name, page, attempt, wait)
+                        logger.warning(
+                            "Timeout %s page %d (attempt %d) — retrying in %ds",
+                            airline_name,
+                            page,
+                            attempt,
+                            wait,
+                        )
                         time.sleep(wait)
                     else:
                         logger.warning("Skipping %s page %d after 3 timeouts", airline_name, page)
@@ -273,7 +279,6 @@ class AllAirlineReviewScraper:
 
 if __name__ == "__main__":
     import argparse
-
     from datetime import timedelta
 
     parser = argparse.ArgumentParser(description="Scrape Skytrax airline reviews")
