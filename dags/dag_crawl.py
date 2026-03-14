@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 from airflow.datasets import Dataset
-from airflow.decorators import dag, task
+from airflow.decorators import dag, task, task_group
 from airflow.models import Param, Variable
 
 from include.tasks.extract.scraper import LANDING_DIR, AllAirlineReviewScraper
@@ -152,18 +152,20 @@ def crawl_dag():
                 uris.append(uri)
         return uris
 
+    @task_group(group_id="scrape_airlines")
+    def scrape_airlines(airline_urls):
+        return [
+            scrape_letter.override(task_id=f"scrape_{letter.lower()}")(
+                letter=letter,
+                airline_urls=airline_urls,
+            )
+            for letter in string.ascii_uppercase
+        ]
+
     # ── Wire up ──────────────────────────────────────────────────────────────
 
     airline_urls = get_airline_urls()
-
-    letter_results = [
-        scrape_letter.override(task_id=f"scrape_{letter.lower()}")(
-            letter=letter,
-            airline_urls=airline_urls,
-        )
-        for letter in string.ascii_uppercase
-    ]
-
+    letter_results = scrape_airlines(airline_urls)
     written_dates = split_and_save(letter_results)
     upload_raw(written_dates)
 
