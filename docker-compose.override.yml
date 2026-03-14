@@ -4,23 +4,17 @@
 # Astronomer merges this file automatically when you run `astro dev start`.
 # The landing/ dir is at /usr/local/airflow/landing inside each container.
 
-version: "3.4"
-
-x-airflow-common: &airflow-common
-  volumes:
-    - ./landing:/usr/local/airflow/landing
-
 services:
   scheduler:
-    <<: *airflow-common
+    volumes:
+      - ./landing:/usr/local/airflow/landing
 
   webserver:
-    <<: *airflow-common
     ports:
       - 8081:8080
+    volumes:
+      - ./landing:/usr/local/airflow/landing
 
   triggerer:
-    <<: *airflow-common
-
-  worker:
-    <<: *airflow-common
+    volumes:
+      - ./landing:/usr/local/airflow/landing
