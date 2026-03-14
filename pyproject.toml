@@ -8,16 +8,8 @@ dependencies = [
     "beautifulsoup4",
     "boto3==1.35.0",
     "snowflake-connector-python",
-    "python-dotenv",
     "Unidecode",
     "openpyxl",
-    "loadenv==0.1.1",
-    "google-api-python-client",
-    "apache-airflow-providers-mysql",
-    "apache-airflow-providers-celery>=3.3.0",
-    "apache-airflow-providers-postgres",
-    "apache-airflow-providers-snowflake",
-    "apache-airflow-providers-amazon",
 ]
 
 [project.optional-dependencies]
