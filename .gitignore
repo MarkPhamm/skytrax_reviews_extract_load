@@ -19,7 +19,8 @@ landing/*.csv
 landing/**/*.csv
 
 # Terraform
-terraform/.terraform/
-terraform/terraform.tfvars
-terraform/*.tfstate
-terraform/*.tfstate.backup
+terraform/**/.terraform/
+terraform/**/terraform.tfvars
+terraform/**/*.tfstate
+terraform/**/*.tfstate.backup
+terraform/**/tfplan

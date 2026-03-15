@@ -4,14 +4,6 @@
 # Terraform owns the infrastructure; Python (dag_snowflake) runs COPY INTO.
 # ---------------------------------------------------------------------------
 
-provider "snowflake" {
-  organization_name        = var.snowflake_org
-  account_name             = var.snowflake_account
-  user                     = var.snowflake_user
-  authenticator            = "SNOWFLAKE"
-  preview_features_enabled = ["snowflake_table_resource", "snowflake_stage_resource"]
-}
-
 # ---------------------------------------------------------------------------
 # Database + Schema
 # ---------------------------------------------------------------------------
@@ -147,7 +139,7 @@ resource "snowflake_stage" "s3" {
   name     = "SKYTRAX_S3_STAGE"
   url      = "s3://${var.bucket_name}/"
 
-  credentials = "AWS_ROLE = '${aws_iam_role.airflow.arn}'"
+  credentials = "AWS_ROLE = '${var.airflow_role_arn}'"
 
   file_format = <<-EOF
     TYPE                         = 'CSV'

@@ -34,32 +34,12 @@ variable "noncurrent_version_expiry_days" {
 }
 
 # ---------------------------------------------------------------------------
-# Variables below are used by disabled modules (IAM, Snowflake).
+# Variables below are used by disabled modules (IAM analyst).
 # Uncomment and fill in when re-enabling those .tf files.
 # ---------------------------------------------------------------------------
-
-# variable "airflow_trusted_arn" {
-#   description = "IAM principal ARN allowed to assume the Airflow role"
-#   type        = string
-# }
 
 # variable "analyst_trusted_arns" {
 #   description = "List of IAM principal ARNs allowed to assume the analyst role"
 #   type        = list(string)
 #   default     = []
 # }
-
-variable "snowflake_org" {
-  description = "Snowflake organization name (from account identifier: ORG-ACCOUNT)"
-  type        = string
-}
-
-variable "snowflake_account" {
-  description = "Snowflake account name (from account identifier: ORG-ACCOUNT)"
-  type        = string
-}
-
-variable "snowflake_user" {
-  description = "Snowflake user for Terraform (must have SYSADMIN + SECURITYADMIN)"
-  type        = string
-}

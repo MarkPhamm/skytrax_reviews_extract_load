@@ -16,7 +16,7 @@ stages to S3 (multi-directory), loads into Snowflake.
   - `raw/YYYY/MM/raw_data_YYYYMMDD.csv`
   - `processed/YYYY/MM/clean_data_YYYYMMDD.csv`
 - **Warehouse**: Snowflake — `SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS`
-- **IaC**: Terraform in `terraform/` (S3 bucket + IAM role for Airflow)
+- **IaC**: Terraform in `terraform/aws/` and `terraform/snowflake/` (separate root modules)
 
 ## Code Conventions
 
@@ -39,15 +39,20 @@ include/
     transform/    ← reads from /landing, outputs to /landing/processed
     load/         ← S3 upload + Snowflake load
   sql/            ← SQL templates
-terraform/        ← S3 bucket, IAM role/policy
+terraform/
+  aws/            ← S3 bucket, IAM role/policy
+  snowflake/      ← database, schema, table, S3 stage
 tests/
 ```
 
 ## Terraform
 
+- Two independent root modules: `terraform/aws/` and `terraform/snowflake/`
 - State: local (dev), remote backend TBD for prod
-- Resources: `aws_s3_bucket`, `aws_iam_role`, `aws_iam_policy`, `aws_iam_role_policy_attachment`
-- Variables file: `terraform/variables.tf` — override with `terraform.tfvars` (gitignored)
+- AWS resources: `aws_s3_bucket`, `aws_iam_role`, `aws_iam_policy`, `aws_iam_role_policy_attachment`
+- Snowflake resources: `snowflake_database`, `snowflake_schema`, `snowflake_table`, `snowflake_stage`
+- Snowflake module takes `bucket_name` and `airflow_role_arn` as inputs (from AWS stack outputs)
+- Variables file: each module has its own `variables.tf` — override with `terraform.tfvars` (gitignored)
 
 ## What NOT to do
 

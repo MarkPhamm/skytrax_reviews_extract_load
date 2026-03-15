@@ -5,15 +5,11 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    snowflake = {
-      source  = "snowflakedb/snowflake"
-      version = "~> 1.0"
-    }
   }
   # Uncomment for remote state (prod):
   # backend "s3" {
   #   bucket = "my-terraform-state-bucket"
-  #   key    = "skytrax/terraform.tfstate"
+  #   key    = "skytrax/aws/terraform.tfstate"
   #   region = "us-east-1"
   # }
 }
