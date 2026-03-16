@@ -7,13 +7,21 @@ Run the scraper and processing pipeline on your machine without any cloud servic
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 
-## Step 1: Install dependencies
+## Step 1: Set up environment
+
+Copy the example env file and fill in your values (for local-only development, the defaults work as-is):
+
+```bash
+cp .env.example .env
+```
+
+## Step 2: Install dependencies
 
 ```bash
 uv sync
 ```
 
-## Step 2: Run a smoke test
+## Step 3: Run a smoke test
 
 Scrape 1 airline, 1 page (~100 rows). Output goes to `landing/raw/`:
 
@@ -28,7 +36,7 @@ ls landing/raw/
 # You should see YYYY/MM/raw_data_YYYYMMDD.csv files
 ```
 
-## Step 3: Process the raw data
+## Step 4: Process the raw data
 
 Process a specific date's raw file into a cleaned CSV:
 
@@ -44,7 +52,7 @@ make process-yesterday
 
 Output goes to `landing/processed/YYYY/MM/clean_data_YYYYMMDD.csv`.
 
-## Step 4: Run a full scrape (optional)
+## Step 5: Run a full scrape (optional)
 
 Scrape all airlines across all pages. This takes a while:
 
@@ -52,7 +60,7 @@ Scrape all airlines across all pages. This takes a while:
 make scrape
 ```
 
-## Step 5: Run tests
+## Step 6: Run tests
 
 ```bash
 make test
