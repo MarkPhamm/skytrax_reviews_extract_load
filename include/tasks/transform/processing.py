@@ -441,15 +441,30 @@ if __name__ == "__main__":
         "--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)"
     )
     parser.add_argument("--yesterday", action="store_true", help="Process yesterday's file")
+    parser.add_argument("--all", action="store_true", help="Process all raw files in landing/raw/")
     args = parser.parse_args()
 
-    run_date = args.date or (date.today() - timedelta(days=1) if args.yesterday else date.today())
+    if args.all:
+        raw_dir = LANDING_DIR / "raw"
+        raw_files = sorted(raw_dir.glob("**/raw_data_*.csv"))
+        if not raw_files:
+            raise FileNotFoundError(f"No raw files found in {raw_dir}")
+        for raw_file in raw_files:
+            date_str = raw_file.stem.replace("raw_data_", "")
+            run_date = datetime.strptime(date_str, "%Y%m%d").date()
+            output_path = get_output_path(run_date)
+            clean(raw_file, output_path)
+            print(f"Done: {output_path}")
+    else:
+        run_date = args.date or (
+            date.today() - timedelta(days=1) if args.yesterday else date.today()
+        )
 
-    input_path = get_input_path(run_date)
-    output_path = get_output_path(run_date)
+        input_path = get_input_path(run_date)
+        output_path = get_output_path(run_date)
 
-    if not input_path.exists():
-        raise FileNotFoundError(f"Raw file not found: {input_path}")
+        if not input_path.exists():
+            raise FileNotFoundError(f"Raw file not found: {input_path}")
 
-    clean(input_path, output_path)
-    print(f"Done: {output_path}")
+        clean(input_path, output_path)
+        print(f"Done: {output_path}")

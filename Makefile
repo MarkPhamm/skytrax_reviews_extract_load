@@ -39,6 +39,10 @@ process-yesterday:
 process:
 	$(PYTHON) include/tasks/transform/processing.py --date $(DATE)
 
+## Process all raw files in landing/raw/
+process-all:
+	$(PYTHON) include/tasks/transform/processing.py --all
+
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 ## Upload yesterday's raw + processed files to S3
@@ -82,4 +86,4 @@ test:
 test-scraper:
 	uv run pytest tests/extract/test_scraper.py -v
 
-.PHONY: dev-setup scrape-smoke scrape process-yesterday process lint lint-fix install-hooks test test-scraper
+.PHONY: dev-setup scrape-smoke scrape process-yesterday process process-all lint lint-fix install-hooks test test-scraper

@@ -38,13 +38,19 @@ ls landing/raw/
 
 ## Step 4: Process the raw data
 
-Process a specific date's raw file into a cleaned CSV:
+Process all raw files at once:
+
+```bash
+make process-all
+```
+
+Or process a specific date:
 
 ```bash
 make process DATE=2026-03-12
 ```
 
-Or process yesterday's data:
+Or just yesterday's data:
 
 ```bash
 make process-yesterday
