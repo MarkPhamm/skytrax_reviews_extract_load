@@ -21,6 +21,7 @@ import json
 import os
 import string
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 from airflow.datasets import Dataset
@@ -70,42 +71,60 @@ def crawl_dag():
         letter: str,
         airline_urls: list[tuple[str, str]],
         **context,
-    ) -> list[dict]:
-        """Scrape all airlines whose name starts with `letter`."""
+    ) -> str | None:
+        """Scrape all airlines whose name starts with `letter`.
+
+        Writes reviews to a staging CSV on disk and returns the file path
+        (instead of returning the data via XCom) to avoid OOM.
+        """
         subset = [(name, url) for name, url in airline_urls if name.upper().startswith(letter)]
         if not subset:
-            return []
+            return None
 
         full_scrape: bool = context["params"]["full_scrape"]
         yesterday = date.today() - timedelta(days=1)
         since_date = None if full_scrape else yesterday
 
-        workers = int(Variable.get("SCRAPER_WORKERS", default_var="10"))
+        default_workers = "10" if full_scrape else "3"
+        workers = int(Variable.get("SCRAPER_WORKERS", default_var=default_workers))
 
         scraper = AllAirlineReviewScraper(
             max_workers=workers,
             since_date=since_date,
         )
 
-        reviews = []
+        all_reviews = []
         for name, url in subset:
-            reviews.extend(scraper.scrape_airline_reviews(name, url))
-        return reviews
+            all_reviews.extend(scraper.scrape_airline_reviews(name, url))
+
+        if not all_reviews:
+            return None
+
+        staging_dir = LANDING_DIR / "staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        staging_path = staging_dir / f"letter_{letter.lower()}.csv"
+        pd.DataFrame(all_reviews).to_csv(staging_path, index=False)
+        return str(staging_path)
 
     @task()
-    def split_and_save(all_reviews: list[list[dict]]) -> list[str]:
+    def split_and_save(staging_paths: list[str | None]) -> list[str]:
         """
-        Flatten reviews and write one CSV per review date.
+        Read staging CSVs written by scrape_letter tasks, merge, and
+        write one CSV per review date.
 
         Returns the list of ISO date strings that were written, e.g.:
           ["2010-03-15", "2010-03-16", ..., "2026-03-12"]
         These are passed to dag_process via an Airflow Variable.
         """
-        flat = [r for letter_reviews in all_reviews for r in letter_reviews]
-        if not flat:
+        valid_paths = [p for p in staging_paths if p]
+        if not valid_paths:
             raise RuntimeError("No reviews scraped across all letters — aborting.")
 
-        df = pd.DataFrame(flat)
+        df = pd.concat([pd.read_csv(p) for p in valid_paths], ignore_index=True)
+
+        # Clean up staging files
+        for p in valid_paths:
+            Path(p).unlink(missing_ok=True)
 
         # Normalise the date column to YYYY-MM-DD so we can group by it.
         # Raw dates come as "22nd March 2025" — strip ordinal suffixes first.
@@ -155,7 +174,10 @@ def crawl_dag():
     @task_group(group_id="scrape_airlines")
     def scrape_airlines(airline_urls):
         return [
-            scrape_letter.override(task_id=f"scrape_{letter.lower()}")(
+            scrape_letter.override(
+                task_id=f"scrape_{letter.lower()}",
+                max_active_tis_per_dagrun=4,
+            )(
                 letter=letter,
                 airline_urls=airline_urls,
             )
