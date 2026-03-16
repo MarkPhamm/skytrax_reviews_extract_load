@@ -31,17 +31,13 @@ scrape:
 
 # ── Processing ───────────────────────────────────────────────────────────────
 
-## Process yesterday's raw file → landing/processed/
-process-yesterday:
-	$(PYTHON) include/tasks/transform/processing.py --yesterday
-
-## Process a specific date: make process DATE=2026-03-12
+## Process all raw files, or a specific date: make process DATE=2026-03-12
 process:
+ifdef DATE
 	$(PYTHON) include/tasks/transform/processing.py --date $(DATE)
-
-## Process all raw files in landing/raw/
-process-all:
+else
 	$(PYTHON) include/tasks/transform/processing.py --all
+endif
 
 # ── Upload ────────────────────────────────────────────────────────────────────
 
@@ -86,4 +82,4 @@ test:
 test-scraper:
 	uv run pytest tests/extract/test_scraper.py -v
 
-.PHONY: dev-setup scrape-smoke scrape process-yesterday process process-all lint lint-fix install-hooks test test-scraper
+.PHONY: dev-setup scrape-smoke scrape process lint lint-fix install-hooks test test-scraper

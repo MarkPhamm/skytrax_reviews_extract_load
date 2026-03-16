@@ -129,8 +129,8 @@ uv sync
 # Local smoke test (no AWS/Snowflake needed)
 make scrape-smoke
 
-# Process all raw data
-make process-all
+# Process all raw data (or: make process DATE=2026-03-12)
+make process
 
 # Run tests
 make test
