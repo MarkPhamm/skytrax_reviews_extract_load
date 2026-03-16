@@ -122,15 +122,9 @@ Load data into Snowflake — both incremental (via DAG) and bulk backfill.
 ## Quick Reference
 
 ```bash
-# Setup
-cp .env.example .env   # edit with your values (defaults work for local dev)
-uv sync
-
 # Local smoke test (no AWS/Snowflake needed)
-make scrape-smoke
-
-# Process yesterday's scraped data
-make process-yesterday
+uv sync
+STORAGE_MODE=local make scrape-smoke
 
 # Run tests
 make test
