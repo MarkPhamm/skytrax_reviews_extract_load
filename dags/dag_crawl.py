@@ -97,15 +97,15 @@ def crawl_dag():
         staging_dir.mkdir(parents=True, exist_ok=True)
         staging_path = staging_dir / f"letter_{letter.lower()}.csv"
 
-        first = True
+        all_reviews = []
         for name, url in subset:
-            reviews = scraper.scrape_airline_reviews(name, url)
-            if reviews:
-                df = pd.DataFrame(reviews)
-                df.to_csv(staging_path, mode="a", index=False, header=first)
-                first = False
+            all_reviews.extend(scraper.scrape_airline_reviews(name, url))
 
-        return str(staging_path) if staging_path.exists() else None
+        if not all_reviews:
+            return None
+
+        pd.DataFrame(all_reviews).to_csv(staging_path, index=False)
+        return str(staging_path)
 
     @task()
     def split_and_save(staging_paths: list[str | None]) -> list[str]:
