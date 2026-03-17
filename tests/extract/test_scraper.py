@@ -50,16 +50,14 @@ def test_get_output_path_ends_in_landing(tmp_path, monkeypatch):
 # AllAirlineReviewScraper.get_all_airline_urls
 # ---------------------------------------------------------------------------
 
-_AZ_HTML = textwrap.dedent(
-    """\
+_AZ_HTML = textwrap.dedent("""\
     <html><body>
       <a href="/airline-reviews/british-airways">British Airways</a>
       <a href="/airline-reviews/lufthansa">Lufthansa</a>
       <a href="/airline-reviews/">All Reviews</a>
       <a href="/something-else">Ignore me</a>
     </body></html>
-"""
-)
+""")
 
 
 def _mock_response(html: str, status: int = 200) -> MagicMock:
@@ -88,14 +86,12 @@ def test_get_all_airline_urls_returns_airlines(mock_get):
 
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_get_all_airline_urls_deduplicates(mock_get):
-    duplicate_html = textwrap.dedent(
-        """\
+    duplicate_html = textwrap.dedent("""\
         <html><body>
           <a href="/airline-reviews/british-airways">British Airways</a>
           <a href="/airline-reviews/british-airways">British Airways</a>
         </body></html>
-    """
-    )
+    """)
     mock_get.return_value = _mock_response(duplicate_html)
     scraper = AllAirlineReviewScraper()
     airlines = scraper.get_all_airline_urls()
@@ -123,8 +119,7 @@ def test_get_all_airline_urls_returns_empty_on_error(mock_get):
 # AllAirlineReviewScraper.extract_review_data
 # ---------------------------------------------------------------------------
 
-_REVIEW_HTML = textwrap.dedent(
-    """\
+_REVIEW_HTML = textwrap.dedent("""\
     <article class="comp comp_media-review-rated">
       <time itemprop="datePublished">2024-11-01</time>
       <span itemprop="name">John Doe</span>
@@ -147,8 +142,7 @@ _REVIEW_HTML = textwrap.dedent(
         </tr>
       </table>
     </article>
-"""
-)
+""")
 
 
 def test_extract_review_data_fields():
@@ -193,8 +187,7 @@ def test_extract_review_data_missing_table():
 # AllAirlineReviewScraper.scrape_airline_reviews
 # ---------------------------------------------------------------------------
 
-_PAGE_HTML = textwrap.dedent(
-    """\
+_PAGE_HTML = textwrap.dedent("""\
     <html><body>
       <article class="comp comp_media-review-rated">
         <time itemprop="datePublished">2024-01-10</time>
@@ -202,8 +195,7 @@ _PAGE_HTML = textwrap.dedent(
         <div itemprop="reviewBody">Good flight</div>
       </article>
     </body></html>
-"""
-)
+""")
 
 _EMPTY_PAGE_HTML = "<html><body></body></html>"
 
@@ -274,11 +266,13 @@ def test_scrape_all_airlines_saves_csv(mock_get, tmp_path, monkeypatch):
     ]
 
     scraper = AllAirlineReviewScraper(num_pages_per_airline=5, run_date=date(2025, 3, 27))
-    output = scraper.scrape_all_airlines()
+    outputs = scraper.scrape_all_airlines()
 
-    assert output.exists()
-    assert output.suffix == ".csv"
-    df = pd.read_csv(output)
+    # Both test reviews have date 2024-01-10, so they land in one file
+    assert len(outputs) == 1
+    assert outputs[0].exists()
+    assert outputs[0].suffix == ".csv"
+    df = pd.read_csv(outputs[0])
     assert len(df) == 2  # 1 review per airline
     assert set(df["airline_name"]) == {"British Airways", "Lufthansa"}
 

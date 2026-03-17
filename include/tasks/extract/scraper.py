@@ -241,12 +241,15 @@ class AllAirlineReviewScraper:
     # Public orchestration
     # ------------------------------------------------------------------
 
-    def scrape_all_airlines(self) -> Path:
+    def scrape_all_airlines(self) -> List[Path]:
         """
-        Scrape all airlines and write the result to the landing directory.
+        Scrape all airlines and split results by review date.
+
+        Each review date gets its own CSV file:
+            landing/raw/YYYY/MM/raw_data_YYYYMMDD.csv
 
         Returns:
-            Path: Location of the saved CSV file.
+            List[Path]: Paths of the saved CSV files.
         """
         airline_urls = self.get_all_airline_urls()
         if not airline_urls:
@@ -269,12 +272,19 @@ class AllAirlineReviewScraper:
             raise RuntimeError("No reviews scraped — aborting.")
 
         df = pd.DataFrame(all_reviews)
-        output_path = get_output_path(self.run_date)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(output_path, index=False)
+        parsed = pd.to_datetime(df["date"], format="mixed", dayfirst=False)
+        df["_parsed_date"] = parsed.dt.date.fillna(self.run_date)
 
-        logger.info("Saved %d reviews → %s", len(df), output_path)
-        return output_path
+        saved_paths = []
+        for review_date, group in df.groupby("_parsed_date"):
+            output_path = get_output_path(review_date)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            group.drop(columns=["_parsed_date"]).to_csv(output_path, index=False)
+            saved_paths.append(output_path)
+            logger.info("Saved %d reviews → %s", len(group), output_path)
+
+        logger.info("Total: %d reviews across %d date files", len(df), len(saved_paths))
+        return saved_paths
 
 
 if __name__ == "__main__":
@@ -319,5 +329,7 @@ if __name__ == "__main__":
         since_date=since_date,
         max_workers=args.workers,
     )
-    saved = scraper.scrape_all_airlines()
-    print(f"Done: {saved}")
+    saved_paths = scraper.scrape_all_airlines()
+    print(f"Done: {len(saved_paths)} files written")
+    for p in saved_paths:
+        print(f"  {p}")
