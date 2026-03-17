@@ -17,19 +17,19 @@ echo "Running lint checks on staged Python files..."
 FAILED=0
 
 # isort — import ordering
-if ! python -m isort --check --diff $STAGED 2>/dev/null; then
-    echo "isort: imports are not sorted. Run 'python -m isort <files>' to fix."
+if ! uv run python -m isort --check --diff $STAGED 2>/dev/null; then
+    echo "isort: imports are not sorted. Run 'uv run python -m isort <files>' to fix."
     FAILED=1
 fi
 
 # black — formatting
-if ! python -m black --check --quiet $STAGED 2>/dev/null; then
-    echo "black: formatting issues found. Run 'python -m black <files>' to fix."
+if ! uv run python -m black --check --quiet $STAGED 2>/dev/null; then
+    echo "black: formatting issues found. Run 'uv run python -m black <files>' to fix."
     FAILED=1
 fi
 
 # flake8 — lint errors
-if ! python -m flake8 --max-line-length 100 --extend-ignore E203 $STAGED 2>/dev/null; then
+if ! uv run python -m flake8 --max-line-length 100 --extend-ignore E203 $STAGED 2>/dev/null; then
     echo "flake8: lint errors found. Fix them before committing."
     FAILED=1
 fi
