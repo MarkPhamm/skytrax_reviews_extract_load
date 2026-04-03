@@ -2,11 +2,11 @@
 # terraform.tfvars is gitignored — never commit it.
 
 # Snowflake — from your account identifier (e.g. MYORG-MYACCOUNT)
-snowflake_org     = "MYORG"
-snowflake_account = "MYACCOUNT"
-snowflake_admin_user    = "TERRAFORM_USER"
+snowflake_org            = "MYORG"
+snowflake_account        = "MYACCOUNT"
+snowflake_admin_user     = "TERRAFORM_USER"
 snowflake_admin_password = "yourpassword"
 
-# These values come from the AWS stack outputs
-bucket_name      = "skytrax-reviews-landing-dev"
-airflow_role_arn = "arn:aws:iam::123456789012:role/skytrax-airflow-dev"
+# These values come from the AWS stack outputs (terraform output)
+bucket_name      = "skytrax-reviews-landing-XXXXXXXXXXXX"
+airflow_role_arn = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-airflow-dev"

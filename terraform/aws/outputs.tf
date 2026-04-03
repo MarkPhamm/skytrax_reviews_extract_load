@@ -23,8 +23,3 @@ output "airflow_secret_access_key" {
   value       = aws_iam_access_key.airflow.secret
   sensitive   = true
 }
-
-# output "analyst_role_arn" {
-#   description = "ARN of the analyst read-only IAM role"
-#   value       = aws_iam_role.analyst.arn
-# }

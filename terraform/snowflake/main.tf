@@ -6,12 +6,6 @@ terraform {
       version = "~> 1.0"
     }
   }
-  # Uncomment for remote state (prod):
-  # backend "s3" {
-  #   bucket = "my-terraform-state-bucket"
-  #   key    = "skytrax/snowflake/terraform.tfstate"
-  #   region = "us-east-1"
-  # }
 }
 
 provider "snowflake" {

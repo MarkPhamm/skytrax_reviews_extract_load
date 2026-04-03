@@ -6,12 +6,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-  # Uncomment for remote state (prod):
-  # backend "s3" {
-  #   bucket = "my-terraform-state-bucket"
-  #   key    = "skytrax/aws/terraform.tfstate"
-  #   region = "us-east-1"
-  # }
 }
 
 provider "aws" {
@@ -31,7 +25,7 @@ provider "aws" {
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "landing" {
-  bucket = var.bucket_name
+  bucket = local.bucket_name
 }
 
 resource "aws_s3_bucket_versioning" "landing" {
@@ -49,7 +43,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "landing" {
     status = "Enabled"
     filter {}
     noncurrent_version_expiration {
-      noncurrent_days = var.noncurrent_version_expiry_days
+      noncurrent_days = 90
     }
   }
 
@@ -57,7 +51,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "landing" {
     id     = "transition-raw-to-ia"
     status = "Enabled"
     filter {
-      prefix = var.raw_prefix
+      prefix = "raw/"
     }
     transition {
       days          = 30
@@ -69,7 +63,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "landing" {
     id     = "transition-processed-to-ia"
     status = "Enabled"
     filter {
-      prefix = var.processed_prefix
+      prefix = "processed/"
     }
     transition {
       days          = 30

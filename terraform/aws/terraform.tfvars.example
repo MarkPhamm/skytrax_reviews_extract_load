@@ -2,14 +2,8 @@
 # terraform.tfvars is gitignored — never commit it.
 
 aws_region  = "us-east-1"
-bucket_name = "skytrax-reviews-landing-dev"
 environment = "dev"
 
-# ARN of the IAM principal that runs Airflow (user, role, or account root)
-airflow_trusted_arn = "arn:aws:iam::123456789012:user/airflow-runner"
-
-# ARNs of analysts who should get read-only access (can be empty list)
-analyst_trusted_arns = [
-  "arn:aws:iam::123456789012:user/analyst-alice",
-  "arn:aws:iam::123456789012:user/analyst-bob",
-]
+# After creating the Snowflake stage (Step 6), run DESC STAGE to get this ARN.
+# Leave empty on first apply — fill in after Snowflake setup, then re-apply.
+snowflake_iam_user_arn = ""

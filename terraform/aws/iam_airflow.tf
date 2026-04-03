@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 # ---------------------------------------------------------------------------
 # IAM Role — Airflow
 #
@@ -12,10 +14,7 @@ data "aws_iam_policy_document" "airflow_assume_role" {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "AWS"
-      identifiers = [
-        "arn:aws:iam::203110101827:root",
-        "arn:aws:iam::612990353424:user/651j1000-s",
-      ]
+      identifiers = local.trust_arns
     }
   }
 }
@@ -29,9 +28,9 @@ resource "aws_iam_role" "airflow" {
 data "aws_iam_policy_document" "airflow_s3" {
   # List the bucket itself (needed for ListBucket)
   statement {
-    sid     = "ListBucket"
-    effect  = "Allow"
-    actions = ["s3:ListBucket", "s3:GetBucketLocation"]
+    sid       = "ListBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [aws_s3_bucket.landing.arn]
   }
 
@@ -64,26 +63,12 @@ resource "aws_iam_role_policy_attachment" "airflow_s3" {
 # ---------------------------------------------------------------------------
 # IAM User — Airflow (programmatic access)
 #
-# This user's only permission is to assume the role above.
-# Generate access keys for use in the Airflow AWS connection.
+# Direct S3 access via the same policy. Access keys are generated for use
+# in the Airflow AWS connection.
 # ---------------------------------------------------------------------------
 
 resource "aws_iam_user" "airflow" {
   name = "skytrax-airflow-${var.environment}"
-}
-
-data "aws_iam_policy_document" "airflow_assume" {
-  statement {
-    effect    = "Allow"
-    actions   = ["sts:AssumeRole"]
-    resources = [aws_iam_role.airflow.arn]
-  }
-}
-
-resource "aws_iam_user_policy" "airflow_assume" {
-  name   = "assume-airflow-role"
-  user   = aws_iam_user.airflow.name
-  policy = data.aws_iam_policy_document.airflow_assume.json
 }
 
 resource "aws_iam_user_policy_attachment" "airflow_s3_direct" {
