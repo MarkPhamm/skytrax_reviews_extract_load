@@ -155,7 +155,7 @@ Let me walk through what resources we're spinning up:
 
 Besides the S3 bucket, Terraform also creates the following IAM resources:
 
-1. **IAM Role** (`skytrax-airflow-dev`) — the role Airflow assumes to access S3. The trust policy is auto-configured to allow your AWS account to assume it
+1. **IAM Role** (`skytrax-snowflake-s3-dev`) — the role Snowflake assumes to read from S3 during `COPY INTO`. The trust policy is auto-configured to allow your AWS account (and later Snowflake) to assume it
 2. **IAM Policy** (`skytrax-airflow-s3-dev`) — defines the actual S3 permissions: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, etc. Basically everything Airflow needs to upload raw files, upload processed files, and clean up old ones
 3. **IAM Role Policy Attachment** — attaches the S3 policy to the role
 4. **IAM User** (`skytrax-airflow-dev`) — a programmatic-access-only user for Airflow
@@ -211,7 +211,7 @@ Outputs:
 
 bucket_name               = "skytrax-reviews-landing-XXXXXXXXXXXX"
 bucket_arn                = "arn:aws:s3:::skytrax-reviews-landing-XXXXXXXXXXXX"
-airflow_role_arn          = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-airflow-dev"
+snowflake_s3_role_arn     = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-snowflake-s3-dev"
 airflow_access_key_id     = "AKIAXXXXXXXXXXXXXXXX"
 airflow_secret_access_key = <sensitive>
 ```
@@ -229,7 +229,7 @@ Save both the `airflow_access_key_id` and `airflow_secret_access_key` somewhere 
 If you want to double check, you can go to the AWS console and verify:
 
 - S3 → you should see your bucket with versioning enabled
-- IAM → you should see the `skytrax-airflow-dev` role and user
+- IAM → you should see the `skytrax-snowflake-s3-dev` role and `skytrax-airflow-dev` user
 
 ## 5.5 Initial data load to S3
 
@@ -251,11 +251,11 @@ The Snowflake Terraform module lives in `terraform/snowflake/` and creates:
 - **Database** (`SKYTRAX_REVIEWS_DB`)
 - **Schema** (`RAW`)
 - **Table** (`AIRLINE_REVIEWS`) — column order matches our processed CSV output
-- **External Stage** (`SKYTRAX_S3_STAGE`) — points to our S3 bucket, uses the Airflow IAM role to authenticate
+- **External Stage** (`SKYTRAX_S3_STAGE`) — points to our S3 bucket, uses the `skytrax-snowflake-s3-dev` IAM role so Snowflake can assume it and read from S3
 
 ## 6.1 Configure Snowflake variables
 
-First, grab the outputs from the AWS module — you'll need `bucket_name` and `airflow_role_arn`:
+First, grab the outputs from the AWS module — you'll need `bucket_name` and `snowflake_s3_role_arn`:
 
 ```bash
 cd terraform/aws
@@ -277,7 +277,7 @@ snowflake_admin_user     = "your_username"
 snowflake_admin_password = "your_password"
 
 bucket_name      = "skytrax-reviews-landing-XXXXXXXXXXXX"
-airflow_role_arn = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-airflow-dev"
+snowflake_s3_role_arn = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-snowflake-s3-dev"
 ```
 
 You can find your `snowflake_org` and `snowflake_account` from your Snowflake account URL — it's in the format `https://MYORG-MYACCOUNT.snowflakecomputing.com`.
@@ -295,7 +295,9 @@ This creates the database, schema, table, and external stage in Snowflake.
 
 ## 6.3 Get the Snowflake IAM user ARN (important!)
 
-Here's the tricky part. When Snowflake creates the external stage with `AWS_ROLE`, it uses its own internal AWS IAM user to assume your role. We need to trust that user in our IAM role's trust policy.
+Here's the tricky part. When you create a stage with `AWS_ROLE`, Snowflake doesn't create anything in *your* AWS account. What actually happens is Snowflake already has its own internal AWS account with its own IAM users. It assigns one of those internal users to your stage — so when Snowflake runs `COPY INTO`, that internal user calls `sts:AssumeRole` on your `skytrax-snowflake-s3-dev` role to get temporary credentials, and uses those to read from your S3 bucket.
+
+The problem is: by default, your role doesn't trust some random user from Snowflake's AWS account. So we need to grab that user's ARN and add it to the role's trust policy — basically telling AWS "hey, this external user from Snowflake is allowed to assume this role."
 
 Run this in Snowflake (via the Snowflake UI or `snowsql`):
 
@@ -316,14 +318,16 @@ environment = "dev"
 snowflake_iam_user_arn = "arn:aws:iam::612990353424:user/651j1000-s"
 ```
 
-Then re-apply the AWS module:
+Why do we need to apply the AWS module again? Right now, the `skytrax-snowflake-s3-dev` role's trust policy only trusts your own AWS account. Snowflake's internal user lives in a completely different AWS account — so when it tries to call `sts:AssumeRole`, AWS rejects it with "I don't know you." By adding the `snowflake_iam_user_arn` to your tfvars, Terraform updates the trust policy to say "I trust both my own account AND this Snowflake user." That's the two-pass setup — you can't do it in one shot because you don't know Snowflake's IAM user ARN until after you create the stage.
+
+Re-apply the AWS module:
 
 ```bash
 cd terraform/aws
 terraform apply
 ```
 
-This updates the IAM role's trust policy to allow Snowflake to assume it. Without this step, you'll get the error: `User is not authorized to perform: sts:AssumeRole`.
+This updates the trust policy. Without this step, you'll get the error: `User is not authorized to perform: sts:AssumeRole`.
 
 You can verify the connection works by running a quick test in Snowflake:
 
@@ -335,4 +339,172 @@ If you see your files listed, the staging area is set up correctly.
 
 # Step 7: Set up Airflow connections with AWS and Snowflake
 
-# Step 8: Set up COPY INTO via dag
+Before we wire everything up, let's be clear about the two different authentication flows in this pipeline — because they use different IAM resources and it's easy to mix them up:
+
+**Airflow → S3 (user-level auth via access keys)**
+
+Airflow uploads and downloads files to/from S3 using an **IAM User** (`skytrax-airflow-dev`). Terraform creates this user with an access key pair (`access_key_id` + `secret_access_key`). We put those credentials in the Airflow `.env` file as the `AIRFLOW_CONN_AWS_S3_CONNECTION`. This is direct, user-level authentication — Airflow sends the access key with every S3 API call. No role assumption involved.
+
+**S3 → Snowflake (role-level auth via `sts:AssumeRole`)**
+
+Snowflake reads files from S3 during `COPY INTO` using an **IAM Role** (`skytrax-snowflake-s3-dev`). When we created the external stage in Step 6, we gave Snowflake the role ARN. Under the hood, Snowflake has its own internal AWS account — it calls `sts:AssumeRole` on our role to get temporary credentials, then uses those to read from our S3 bucket. That's why we needed the two-pass setup: first create the role, then tell AWS to trust Snowflake's IAM user in the role's trust policy.
+
+**Why two different approaches?** The IAM user gives Airflow long-lived credentials that work in a Docker container with no AWS metadata service. The IAM role gives Snowflake temporary, scoped credentials without us ever sharing secrets — Snowflake never sees an access key, it just assumes the role.
+
+Now let's set up the actual connections. Airflow connections are configured through environment variables in a `.env` file — no clicking around the Airflow UI needed.
+
+## 7.1 Install Astro CLI and start Airflow
+
+If you haven't already, install the [Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli). Then build the Astronomer Docker image:
+
+```bash
+make dev-setup
+```
+
+This builds the Docker image and starts Airflow locally. The Airflow UI will be available at `http://localhost:8080`.
+
+## 7.2 Create the `.env` file
+
+We already created a `.env` file in Step 2 for local development. Now we need to update it with our AWS and Snowflake credentials so Airflow can actually talk to S3 and Snowflake.
+
+Open your `.env` file and update it to:
+
+```bash
+STORAGE_MODE=s3
+S3_BUCKET=skytrax-reviews-landing-XXXXXXXXXXXX
+AIRFLOW_CONN_AWS_S3_CONNECTION=aws://<ACCESS_KEY_ID>:<URL_ENCODED_SECRET>@/?region_name=us-east-1
+AIRFLOW_CONN_SNOWFLAKE_DEFAULT='{"conn_type":"snowflake","login":"<SNOWFLAKE_USER>","password":"<SNOWFLAKE_PASSWORD>","schema":"RAW","extra":{"account":"<ORG>-<ACCOUNT>","database":"SKYTRAX_REVIEWS_DB","warehouse":"COMPUTE_WH","role":"SYSADMIN"}}'
+```
+
+Let me break down what each variable does:
+
+- **`STORAGE_MODE=s3`** — tells the pipeline to use S3 instead of local storage. When this was `local`, the DAGs skipped S3/Snowflake entirely
+- **`S3_BUCKET`** — your bucket name from `terraform output bucket_name`
+- **`AIRFLOW_CONN_AWS_S3_CONNECTION`** — the AWS connection in URI format. Airflow reads this env var and auto-registers it as a connection with ID `aws_s3_connection`
+- **`AIRFLOW_CONN_SNOWFLAKE_DEFAULT`** — the Snowflake connection in JSON format. Must be wrapped in single quotes. Airflow registers this as `snowflake_default`
+
+### Where to get the values
+
+| Variable | How to get it |
+| -------- | ------------- |
+| `S3_BUCKET` | `cd terraform/aws && terraform output bucket_name` |
+| `ACCESS_KEY_ID` | `cd terraform/aws && terraform output airflow_access_key_id` |
+| `URL_ENCODED_SECRET` | `cd terraform/aws && terraform output -raw airflow_secret_access_key` — then URL-encode special characters |
+| `SNOWFLAKE_USER` | Your Snowflake username |
+| `SNOWFLAKE_PASSWORD` | Your Snowflake password |
+| `ORG-ACCOUNT` | Your Snowflake account identifier (e.g. `nvnjoib-on80344`) |
+
+### URL-encoding the AWS secret key
+
+This is important — if your secret key contains special characters like `+`, `/`, `=`, or `@`, you need to URL-encode them or the connection will fail with `SignatureDoesNotMatch`:
+
+| Character | Encoded |
+| --------- | ------- |
+| `+` | `%2B` |
+| `/` | `%2F` |
+| `=` | `%3D` |
+| `@` | `%40` |
+
+For example: `GSstxwFTvbwTIvIczSpGZLv810qLwLG+EpaVi5St` becomes `GSstxwFTvbwTIvIczSpGZLv810qLwLG%2BEpaVi5St`
+
+> **Heads up — zsh `%` gotcha:** If you use `terraform output -raw` to grab the secret key, zsh will print a `%` at the end of output that doesn't end with a newline. That `%` is **not** part of your key — it's just zsh telling you there's no trailing newline. Don't include it.
+
+## 7.3 Test the connection before restarting
+
+Before restarting Airflow, verify your credentials work by running a quick S3 list from your terminal. Use the **raw** (non-URL-encoded) secret key here — this is a direct AWS CLI call, not an Airflow URI:
+
+```bash
+AWS_ACCESS_KEY_ID=<ACCESS_KEY_ID> AWS_SECRET_ACCESS_KEY='<SECRET_KEY>' aws s3 ls s3://<BUCKET_NAME>/ --region us-east-1
+```
+
+You should see something like:
+
+```
+PRE processed/
+PRE raw/
+```
+
+If you see your prefixes listed, your credentials are valid. If you get `SignatureDoesNotMatch`, the secret key is wrong — go back to the IAM console and double-check it (and remember: that trailing `%` from `terraform output -raw` is not part of the key).
+
+Once the CLI test passes, you know any future `SignatureDoesNotMatch` in Airflow is a URL-encoding issue in the `.env`, not a bad key.
+
+## 7.4 Restart Airflow
+
+After updating `.env`, restart Airflow so it picks up the new connections:
+
+```bash
+astro dev restart
+```
+
+You can verify the connections are registered by going to the Airflow UI → Admin → Connections. You should see `aws_s3_connection` and `snowflake_default`.
+
+# Step 8: Set up COPY INTO via DAG
+
+Now everything is wired up — S3 bucket, Snowflake stage, Airflow connections. Time to run the full pipeline.
+
+## 8.1 How the DAGs work
+
+The pipeline consists of 3 DAGs chained together via **Airflow Datasets**:
+
+1. **`skytrax_crawl`** (Extract) — scrapes reviews from airlinequality.com, splits by review date, uploads raw CSVs to S3. Emits the `skytrax://raw` dataset when done
+2. **`skytrax_process`** (Transform) — triggered automatically when new raw data lands. Downloads the raw CSV, runs the cleaning pipeline, uploads processed CSV to S3. Emits `skytrax://processed`
+3. **`skytrax_snowflake`** (Load) — triggered automatically when processed data is ready. Runs `COPY INTO` for each review date to load into Snowflake
+
+The key thing here is that these DAGs are **event-driven**. You don't need to schedule them separately — when `skytrax_crawl` finishes, it automatically triggers `skytrax_process`, which then triggers `skytrax_snowflake`. Clean chain.
+
+## 8.2 The COPY INTO logic
+
+The actual loading happens in `include/tasks/load/snowflake_load.py`. For each review date, it runs this SQL template (`include/sql/copy_into.sql`):
+
+```sql
+COPY INTO SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS
+FROM @SKYTRAX_REVIEWS_DB.RAW.SKYTRAX_S3_STAGE/{{ s3_key }}
+ON_ERROR = 'CONTINUE'
+PURGE    = FALSE;
+```
+
+Where `{{ s3_key }}` gets replaced with the actual S3 path like `processed/2026/03/clean_data_20260312.csv`. A few things to note:
+
+- **`ON_ERROR = 'CONTINUE'`** — keeps loading even if some rows fail, so one bad row doesn't block the whole file
+- **`PURGE = FALSE`** — doesn't delete the source file after loading, so you can always re-run
+- Snowflake internally tracks which files have been loaded, so running the same `COPY INTO` twice won't create duplicates
+
+The `skytrax_snowflake` DAG uses **dynamic task mapping** — it creates one `load_date` task per review date. So if the crawler found reviews for 5 different dates, you'll see 5 parallel load tasks in the Airflow UI.
+
+## 8.3 Run the full pipeline
+
+### Daily incremental run
+
+The `skytrax_crawl` DAG is scheduled to run daily. It scrapes yesterday's reviews, and the downstream DAGs trigger automatically via Datasets.
+
+To trigger manually: click the play button on `skytrax_crawl` in the Airflow UI.
+
+### Full initial load
+
+For the first time, you want to load all historical reviews:
+
+1. Go to the `skytrax_crawl` DAG in the Airflow UI
+2. Click **Trigger DAG w/ config**
+3. Set `full_scrape` to `true`
+4. Click **Trigger**
+
+This scrapes all historical reviews going back to 2002. The downstream `skytrax_process` and `skytrax_snowflake` DAGs trigger automatically and load everything into Snowflake.
+
+## 8.4 Verify the data in Snowflake
+
+Once the pipeline finishes, verify the data landed:
+
+```sql
+SELECT COUNT(*) FROM SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS;
+-- Should see 160,000+ rows
+
+SELECT * FROM SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS LIMIT 10;
+```
+
+You can also check S3 to make sure files are there:
+
+```bash
+aws s3 ls s3://skytrax-reviews-landing-<your_account_id>/processed/ --recursive | head -20
+```
+
+And that's it! You now have a fully working ingestion pipeline — scraping data from the web, staging it in S3, and loading it into Snowflake. All orchestrated by Airflow, all infrastructure managed by Terraform. In [part 2](https://github.com/MarkPhamm/skytrax_reviews_transformation), we'll transform this raw data using `dbt` into analytical models.
