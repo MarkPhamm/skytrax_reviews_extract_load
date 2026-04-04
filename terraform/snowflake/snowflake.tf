@@ -139,7 +139,7 @@ resource "snowflake_stage" "s3" {
   name     = "SKYTRAX_S3_STAGE"
   url      = "s3://${var.bucket_name}/"
 
-  credentials = "AWS_ROLE = '${var.airflow_role_arn}'"
+  credentials = "AWS_ROLE = '${var.snowflake_s3_role_arn}'"
 
   file_format = <<-EOF
     TYPE                         = 'CSV'

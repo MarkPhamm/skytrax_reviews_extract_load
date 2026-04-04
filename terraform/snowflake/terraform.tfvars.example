@@ -9,4 +9,4 @@ snowflake_admin_password = "yourpassword"
 
 # These values come from the AWS stack outputs (terraform output)
 bucket_name      = "skytrax-reviews-landing-XXXXXXXXXXXX"
-airflow_role_arn = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-airflow-dev"
+snowflake_s3_role_arn = "arn:aws:iam::XXXXXXXXXXXX:role/skytrax-snowflake-s3-dev"

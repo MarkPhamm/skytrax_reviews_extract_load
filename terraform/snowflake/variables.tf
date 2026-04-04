@@ -24,7 +24,7 @@ variable "bucket_name" {
   type        = string
 }
 
-variable "airflow_role_arn" {
-  description = "ARN of the Airflow IAM role used for S3 stage credentials (from AWS stack output)"
+variable "snowflake_s3_role_arn" {
+  description = "ARN of the IAM role Snowflake assumes to read from S3 (from AWS stack output)"
   type        = string
 }

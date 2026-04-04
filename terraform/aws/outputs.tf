@@ -8,9 +8,9 @@ output "bucket_arn" {
   value       = aws_s3_bucket.landing.arn
 }
 
-output "airflow_role_arn" {
-  description = "ARN of the Airflow IAM role — use this in the Airflow AWS connection"
-  value       = aws_iam_role.airflow.arn
+output "snowflake_s3_role_arn" {
+  description = "ARN of the IAM role Snowflake assumes to read from S3"
+  value       = aws_iam_role.snowflake_s3.arn
 }
 
 output "airflow_access_key_id" {

@@ -1,14 +1,13 @@
 data "aws_caller_identity" "current" {}
 
 # ---------------------------------------------------------------------------
-# IAM Role — Airflow
+# IAM Role — Snowflake S3 Access
 #
 # Permissions: full read/write/delete on the landing bucket.
-# Used by Astronomer/Airflow to upload raw + processed CSVs and (optionally)
-# clean up old files.
+# Snowflake assumes this role to read from S3 during COPY INTO.
 # ---------------------------------------------------------------------------
 
-data "aws_iam_policy_document" "airflow_assume_role" {
+data "aws_iam_policy_document" "snowflake_assume_role" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
@@ -19,10 +18,10 @@ data "aws_iam_policy_document" "airflow_assume_role" {
   }
 }
 
-resource "aws_iam_role" "airflow" {
-  name               = "skytrax-airflow-${var.environment}"
-  assume_role_policy = data.aws_iam_policy_document.airflow_assume_role.json
-  description        = "Assumed by Airflow to read/write the Skytrax landing bucket"
+resource "aws_iam_role" "snowflake_s3" {
+  name               = "skytrax-snowflake-s3-${var.environment}"
+  assume_role_policy = data.aws_iam_policy_document.snowflake_assume_role.json
+  description        = "Assumed by Snowflake to read from the Skytrax landing bucket during COPY INTO"
 }
 
 data "aws_iam_policy_document" "airflow_s3" {
@@ -55,8 +54,8 @@ resource "aws_iam_policy" "airflow_s3" {
   policy      = data.aws_iam_policy_document.airflow_s3.json
 }
 
-resource "aws_iam_role_policy_attachment" "airflow_s3" {
-  role       = aws_iam_role.airflow.name
+resource "aws_iam_role_policy_attachment" "snowflake_s3" {
+  role       = aws_iam_role.snowflake_s3.name
   policy_arn = aws_iam_policy.airflow_s3.arn
 }
 
