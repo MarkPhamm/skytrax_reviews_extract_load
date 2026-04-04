@@ -2,7 +2,7 @@
 
 Hi everyone, I’m Mark - Analytics Engineer at Insurify.
 
-**TLDR: P**art 1 - Ingestion pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](http://airlinequality.com/), stages partitioned data to S3 (Managed by terraform), and loads into Snowflake for down stream dbt.
+**TLDR:** Part 1 - Ingestion pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](http://airlinequality.com/), stages partitioned data to S3 (Managed by terraform), and loads into Snowflake for down stream dbt.
 
 Hi everyone, my name is Mark - Analytics Engineer at Insurify - graduated from TCU in summer 2025 majoring in Computer system Analyst with a minor in Math, Fintech.
 
@@ -35,7 +35,7 @@ You must be wondering, why the additional transformation from `raw` to `processe
 - **Faster alerting:** For example, if a required column is missing, we can send a Slack alert immediately.
 - **Cleaner warehouse inputs:** Only validated, structured data gets loaded into Snowflake, which keeps downstream models more reliable.
 
-Finally, we will orchestrate using Airflow on astronomer, though there’ no production process, we will run airflow locally with `astro dev start` . There are 3 main dags:
+Finally, we will orchestrate using Airflow on astronomer, though there’s no production process, we will run airflow locally with `astro dev start` . There are 3 main dags:
 
 - `dag_crawl.py`
 - `dag_process.py`
@@ -43,7 +43,7 @@ Finally, we will orchestrate using Airflow on astronomer, though there’ no pro
 
 # Prerequisite
 
-I would expect you have some experience with Python - with an Orchestration tools (General knowledge of what’s an orchestration tool). Some experience with Docker would be nice, but not required. Experience with git is crucial to clone/replicate the projects. And also, obviously, we
+I would expect you have some experience with Python - with an Orchestration tools (General knowledge of what’s an orchestration tool). Some experience with Docker would be nice, but not required. Experience with git is crucial to clone/replicate the projects. And also, obviously, we need a Snowflake account and an AWS account — both have free tiers that are more than enough for this project.
 
 Main AWS/Snowflake infrastructure are all set up in the `Terraform` dir. You will need to create a AWS account, and set up an `terraform-admin` profile. Don’t worry if you don’t have one, we will walk through the set up of creating a profile really quickly
 
@@ -55,7 +55,7 @@ The repo link is here: <https://github.com/MarkPhamm/skytrax_reviews_extract_loa
 
 Before we run our python scripts, we need to resolve our dependencies first. One of the most important concept when developing with python is a virtual environment. Think about as a isolate env where you can download/install any packages you want without effecting other projects. That’s what we will be doing now.
 
-```sql
+```bash
 uv sync
 ```
 
@@ -69,7 +69,7 @@ Copy the example env file and fill in your values (for local-only development, t
 
 `cp .env.example .env`
 
-## 2.1 Testing out `scraper.py`with small amount of data
+## 2.1 Testing out `scraper.py` with small amount of data
 
 ### **2.1.1 Step 1: Run a smoke test**
 
@@ -153,14 +153,55 @@ Let me walk through what resources we're spinning up:
 - **Server-side encryption** (AES256) — data at rest is encrypted
 - **Public access fully blocked** — no one is accidentally exposing our data
 
-Besides the S3 bucket, Terraform also creates the following IAM resources:
+Besides the S3 bucket, Terraform also creates IAM resources for two separate auth flows. Here's the big picture:
+
+```text
+                              AWS Account
+                    ┌────────────────────────────────┐
+                    │                                │
+                    │  IAM User: skytrax-airflow-dev │
+                    │  (access_key + secret_key)     │
+                    │        │                       │
+                    │        ▼                       │
+┌──────────┐        │  ┌───────────────────────┐     │        ┌──────────────┐
+│ Airflow  │  PUT   │  │       S3 Bucket       │     │  READ  │  Snowflake   │
+│ (Docker) │───────>│  │ skytrax-reviews-      │     │<───────│  COPY INTO   │
+│          │ upload │  │ landing-<account_id>  │     │        │              │
+│ DAG 1:   │ raw/   │  │                       │     │        │  SKYTRAX_S3  │
+│  crawl   │───────>│  │   raw/YYYY/MM/*.csv   │     │        │  _STAGE      │
+│          │        │  │                       │     │        │              │
+│ DAG 2:   │ upload │  │   processed/          │     │        └──────┬───────┘
+│  process │───────>│  │   YYYY/MM/*.csv       │     │               │
+│          │ proc/  │  └───────────────────────┘     │               │
+└──────────┘        │                                │               │
+                    │  IAM Role:                     │               │
+                    │  skytrax-snowflake-s3-dev      │               │
+                    │  (trust policy)                │               │
+                    │        ▲                       │               │
+                    │        │ sts:AssumeRole        │               │
+                    │        │ (temp credentials)    │               │
+                    └────────│───────────────────────┘               │
+                             │                                       │
+                             └───────────────────────────────────────┘
+                               Snowflake's internal AWS account
+                               (arn:aws:iam::XXXXXX:user/XXXXX)
+
+Auth Flow 1: Airflow → S3         Auth Flow 2: S3 → Snowflake
+  IAM User + Access Keys            IAM Role + sts:AssumeRole
+  (long-lived credentials)          (temporary credentials)
+```
+
+**For Airflow → S3 (user-level auth):**
+
+1. **IAM User** (`skytrax-airflow-dev`) — a programmatic-access-only user for Airflow
+2. **IAM Access Key** — auto-generated `access_key_id` + `secret_access_key` credentials for the user — we'll use these later when setting up the Airflow AWS connection
+3. **IAM Policy** (`skytrax-airflow-s3-dev`) — defines the actual S3 permissions: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, etc. Basically everything Airflow needs to upload raw files, upload processed files, and clean up old ones
+4. **IAM User Policy Attachment** — attaches the S3 policy directly to the user
+
+**For S3 → Snowflake (role-level auth):**
 
 1. **IAM Role** (`skytrax-snowflake-s3-dev`) — the role Snowflake assumes to read from S3 during `COPY INTO`. The trust policy is auto-configured to allow your AWS account (and later Snowflake) to assume it
-2. **IAM Policy** (`skytrax-airflow-s3-dev`) — defines the actual S3 permissions: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, etc. Basically everything Airflow needs to upload raw files, upload processed files, and clean up old ones
-3. **IAM Role Policy Attachment** — attaches the S3 policy to the role
-4. **IAM User** (`skytrax-airflow-dev`) — a programmatic-access-only user for Airflow
-5. **IAM User Policy Attachment** — attaches the S3 policy directly to the user
-6. **IAM Access Key** — auto-generated `access_key_id` + `secret_access_key` credentials for the user — we'll use these later when setting up the Airflow AWS connection
+2. **IAM Role Policy Attachment** — attaches the same S3 policy to the role, so Snowflake gets the same S3 permissions
 
 In total, Terraform creates 11 resources: the S3 bucket (with versioning, lifecycle, encryption, and public access block configs) + the 6 IAM resources above.
 
@@ -182,7 +223,7 @@ environment = "dev"
 That's it — the defaults work fine for most people. You don't need to configure a bucket name or any IAM ARNs. Terraform automatically detects your AWS account ID from the `terraform-admin` profile and uses it to:
 
 - Name the bucket `skytrax-reviews-landing-<your_account_id>` (guaranteed unique since account IDs are unique)
-- Set up the IAM trust policy so your account can assume the Airflow role
+- Set up the IAM trust policy so your account can assume the Snowflake S3 role
 
 The `terraform.tfvars` file is gitignored so you don't accidentally commit any sensitive info.
 
@@ -248,6 +289,7 @@ That's it for the AWS setup. All managed by Terraform — if you ever need to te
 Now here's where it gets interesting. We need to connect Snowflake to our S3 bucket so that Snowflake can read data from it. This is done through an **external stage** — basically telling Snowflake "hey, here's an S3 path and an IAM role you can use to access it."
 
 The Snowflake Terraform module lives in `terraform/snowflake/` and creates:
+
 - **Database** (`SKYTRAX_REVIEWS_DB`)
 - **Schema** (`RAW`)
 - **Table** (`AIRLINE_REVIEWS`) — column order matches our processed CSV output
