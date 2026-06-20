@@ -12,39 +12,12 @@ import pandas as pd
 import pytest
 from bs4 import BeautifulSoup
 
-from include.tasks.extract.scraper import AllAirlineReviewScraper, get_output_path
-
-# ---------------------------------------------------------------------------
-# get_output_path
-# ---------------------------------------------------------------------------
-
-
-def test_get_output_path_format():
-    path = get_output_path(date(2025, 3, 27))
-    assert path.parts[-1] == "raw_data_20250327.csv"
-    assert path.parts[-2] == "03"
-    assert path.parts[-3] == "2025"
-    assert path.parts[-4] == "raw"
-
-
-def test_get_output_path_zero_padded_month():
-    path = get_output_path(date(2025, 1, 5))
-    assert path.parts[-2] == "01"
-    assert path.parts[-1] == "raw_data_20250105.csv"
-    assert path.parts[-4] == "raw"
-
-
-def test_get_output_path_ends_in_landing(tmp_path, monkeypatch):
-    monkeypatch.setenv("LANDING_DIR", str(tmp_path))
-    # Re-import to pick up the new env var value
-    import importlib
-
-    import include.tasks.extract.scraper as mod
-
-    importlib.reload(mod)
-    path = mod.get_output_path(date(2025, 6, 15))
-    assert path.is_relative_to(tmp_path)
-
+import include.tasks.common.paths as paths_mod
+from include.tasks.extract.scraper import (
+    CATEGORIES,
+    AllAirlineReviewScraper,
+    ReviewScraper,
+)
 
 # ---------------------------------------------------------------------------
 # AllAirlineReviewScraper.get_all_airline_urls
@@ -255,7 +228,7 @@ def test_scrape_airline_reviews_retries_on_timeout(mock_get, mock_sleep):
 
 @patch("include.tasks.extract.scraper.requests.Session.get")
 def test_scrape_all_airlines_saves_csv(mock_get, tmp_path, monkeypatch):
-    monkeypatch.setattr("include.tasks.extract.scraper.LANDING_DIR", tmp_path)
+    monkeypatch.setattr(paths_mod, "LANDING_DIR", tmp_path)
 
     mock_get.side_effect = [
         _mock_response(_AZ_HTML),  # A-Z page
@@ -271,7 +244,8 @@ def test_scrape_all_airlines_saves_csv(mock_get, tmp_path, monkeypatch):
     # Both test reviews have date 2024-01-10, so they land in one file
     assert len(outputs) == 1
     assert outputs[0].exists()
-    assert outputs[0].suffix == ".csv"
+    # Type-first partition: .../raw/airlines/2024/01/raw_data_20240110.csv
+    assert outputs[0].parts[-5:] == ("raw", "airlines", "2024", "01", "raw_data_20240110.csv")
     df = pd.read_csv(outputs[0])
     assert len(df) == 2  # 1 review per airline
     assert set(df["airline_name"]) == {"British Airways", "Lufthansa"}
@@ -283,3 +257,108 @@ def test_scrape_all_airlines_raises_when_no_airlines(mock_get):
     scraper = AllAirlineReviewScraper()
     with pytest.raises(RuntimeError, match="No airlines found"):
         scraper.scrape_all_airlines()
+
+
+# ---------------------------------------------------------------------------
+# ReviewScraper — seat / lounge / airport categories
+# ---------------------------------------------------------------------------
+
+# A-Z seat index page mixing the wanted category, another category, and the
+# bare index link — only the real seat entity should survive filtering.
+_SEAT_AZ_HTML = textwrap.dedent("""\
+    <html><body>
+      <a href="/seat-reviews/british-airways">British Airways</a>
+      <a href="/airline-reviews/lufthansa">Lufthansa</a>
+      <a href="/seat-reviews/">All Seat Reviews</a>
+      <a href="/something-else">Ignore me</a>
+    </body></html>
+""")
+
+_AIRPORT_AZ_HTML = textwrap.dedent("""\
+    <html><body>
+      <a href="/airport-reviews/aberdeen-airport">Aberdeen Airport</a>
+    </body></html>
+""")
+
+
+def test_category_combined_filenames():
+    assert CATEGORIES["seat"].combined_filename == "all_seats_review_raw.csv"
+    assert CATEGORIES["lounge"].combined_filename == "all_lounge_review_raw.csv"
+    assert CATEGORIES["airport"].combined_filename == "all_airport_review_raw.csv"
+    # airline has no flat-combine output (it uses the date-partitioned pipeline)
+    assert CATEGORIES["airline"].combined_filename is None
+
+
+@patch("include.tasks.extract.scraper.requests.Session.get")
+def test_get_entity_urls_filters_to_category(mock_get):
+    mock_get.return_value = _mock_response(_SEAT_AZ_HTML)
+    scraper = ReviewScraper(category="seat")
+    entities = scraper.get_entity_urls()
+
+    names = [n for n, _ in entities]
+    urls = [u for _, u in entities]
+
+    # Only the /seat-reviews/ entity is kept — the airline link and bare index
+    # link are both excluded.
+    assert names == ["British Airways"]
+    assert all("/seat-reviews/" in u for u in urls)
+    assert not any("/airline-reviews/" in u for u in urls)
+    assert not any(u.endswith("/seat-reviews/") for u in urls)
+
+
+@patch("include.tasks.extract.scraper.requests.Session.get")
+def test_scrape_entity_reviews_sets_airline_name_for_seat(mock_get):
+    mock_get.side_effect = [
+        _mock_response(_PAGE_HTML),
+        _mock_response(_EMPTY_PAGE_HTML),
+    ]
+    scraper = ReviewScraper(category="seat", num_pages_per_entity=5)
+    reviews = scraper.scrape_entity_reviews(
+        "British Airways", "https://example.com/seat-reviews/british-airways"
+    )
+    assert len(reviews) == 1
+    assert reviews[0]["airline_name"] == "British Airways"
+
+
+@patch("include.tasks.extract.scraper.requests.Session.get")
+def test_scrape_entity_reviews_sets_airport_name(mock_get):
+    mock_get.side_effect = [
+        _mock_response(_PAGE_HTML),
+        _mock_response(_EMPTY_PAGE_HTML),
+    ]
+    scraper = ReviewScraper(category="airport", num_pages_per_entity=5)
+    reviews = scraper.scrape_entity_reviews(
+        "Aberdeen Airport", "https://example.com/airport-reviews/aberdeen-airport"
+    )
+    assert len(reviews) == 1
+    # airport reviews key the entity name as airport_name, not airline_name
+    assert reviews[0]["airport_name"] == "Aberdeen Airport"
+    assert "airline_name" not in reviews[0]
+
+
+def test_scrape_combined_rejects_airline():
+    scraper = ReviewScraper(category="airline")
+    with pytest.raises(ValueError, match="no combined output"):
+        scraper.scrape_combined()
+
+
+@patch("include.tasks.extract.scraper.requests.Session.get")
+def test_scrape_combined_writes_single_flat_csv(mock_get, tmp_path, monkeypatch):
+    monkeypatch.setattr(paths_mod, "LANDING_DIR", tmp_path)
+
+    mock_get.side_effect = [
+        _mock_response(_SEAT_AZ_HTML),  # A-Z seat index → 1 entity (British Airways)
+        _mock_response(_PAGE_HTML),  # BA seat page 1
+        _mock_response(_EMPTY_PAGE_HTML),  # BA seat page 2 → stop
+    ]
+
+    scraper = ReviewScraper(category="seat", num_pages_per_entity=5)
+    output_path = scraper.scrape_combined()
+
+    # A single flat CSV in the landing root — no YYYY/MM partition dirs.
+    assert output_path == tmp_path / "all_seats_review_raw.csv"
+    assert output_path.exists()
+    df = pd.read_csv(output_path)
+    assert len(df) == 1
+    assert df["airline_name"].tolist() == ["British Airways"]
+    assert df["customer_name"].tolist() == ["Alice"]
