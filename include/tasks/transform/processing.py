@@ -1,50 +1,30 @@
 """
-Transforms raw scraped reviews into a clean, analysis-ready CSV.
+Transforms raw scraped reviews into clean, analysis-ready CSVs.
 
-Reads from:  landing/raw/YYYY/MM/raw_data_YYYYMMDD.csv
-Writes to:   landing/processed/YYYY/MM/clean_data_YYYYMMDD.csv
+Two entry points:
+  - ``clean(input, output)`` — the airline cleaning pipeline (route + aircraft
+    normalisation + airline column order).
+  - ``clean_combined(category)`` / ``clean_file(category, input, output)`` —
+    category-aware cleaning for seat/lounge/airport (and airline).
 
-Both paths are under LANDING_DIR (env var or {project_root}/landing).
-This means local runs and production runs use identical code — the only
-difference is whether landing/ is a local directory or a mounted volume.
+Paths/keys are built by ``include.tasks.common.paths`` (single source of truth).
 """
 
 import logging
-import os
 import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
+from include.tasks.common import paths
+from include.tasks.extract.scraper import CATEGORIES as _SCRAPER_CATEGORIES
 from include.tasks.transform import config as cfg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LANDING_DIR = Path(os.getenv("LANDING_DIR", _PROJECT_ROOT / "landing"))
-
-
-def get_input_path(run_date: date) -> Path:
-    return (
-        LANDING_DIR
-        / "raw"
-        / run_date.strftime("%Y")
-        / run_date.strftime("%m")
-        / f"raw_data_{run_date.strftime('%Y%m%d')}.csv"
-    )
-
-
-def get_output_path(run_date: date) -> Path:
-    return (
-        LANDING_DIR
-        / "processed"
-        / run_date.strftime("%Y")
-        / run_date.strftime("%m")
-        / f"clean_data_{run_date.strftime('%Y%m%d')}.csv"
-    )
 
 
 def clean(input_path: Path, output_path: Path) -> Path:
@@ -86,13 +66,15 @@ def clean(input_path: Path, output_path: Path) -> Path:
 
 def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.rename(columns=lambda x: x.strip().lower().replace(" ", "_"), inplace=True)
-    df.columns = df.columns.str.replace("&", "and").str.replace("-", "_")
+    df.columns = df.columns.str.replace("&", "and").str.replace("-", "_").str.replace("/", "_")
     df.rename(columns={"date": "date_submitted", "country": "nationality"}, inplace=True)
     return df
 
 
-def _clean_date_submitted(df: pd.DataFrame) -> pd.DataFrame:
+def _clean_date_submitted(df: pd.DataFrame, coerce: bool = False) -> pd.DataFrame:
     # Dates may already be ISO-formatted (from split_and_save) or raw ("22nd March 2025").
+    # coerce=True (combined raw CSVs) turns an unparseable date into NaT instead of raising.
+    errors = "coerce" if coerce else "raise"
     try:
         df["date_submitted"] = pd.to_datetime(df["date_submitted"], format="%Y-%m-%d").dt.strftime(
             "%Y-%m-%d"
@@ -101,9 +83,9 @@ def _clean_date_submitted(df: pd.DataFrame) -> pd.DataFrame:
         df["date_submitted"] = df["date_submitted"].str.replace(
             r"(\d+)(st|nd|rd|th)", r"\1", regex=True
         )
-        df["date_submitted"] = pd.to_datetime(df["date_submitted"], format="%d %B %Y").dt.strftime(
-            "%Y-%m-%d"
-        )
+        df["date_submitted"] = pd.to_datetime(
+            df["date_submitted"], format="%d %B %Y", errors=errors
+        ).dt.strftime("%Y-%m-%d")
     return df
 
 
@@ -141,9 +123,12 @@ def _clean_review_body(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clean_date_flown(df: pd.DataFrame) -> pd.DataFrame:
-    df["date_flown"] = pd.to_datetime(
-        df["date_flown"], format="%B %Y", errors="coerce"
-    ).dt.strftime("%Y-%m-%d")
+    return _clean_month_year(df, "date_flown")
+
+
+def _clean_month_year(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """Parse a 'Month YYYY' column (e.g. 'March 2025') to ISO date string."""
+    df[col] = pd.to_datetime(df[col], format="%B %Y", errors="coerce").dt.strftime("%Y-%m-%d")
     return df
 
 
@@ -152,16 +137,21 @@ def _clean_recommended(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _clean_ratings(df: pd.DataFrame) -> pd.DataFrame:
-    rating_cols = [
-        "seat_comfort",
-        "cabin_staff_service",
-        "food_and_beverages",
-        "inflight_entertainment",
-        "ground_service",
-        "wifi_and_connectivity",
-        "value_for_money",
-    ]
+# Star-rated columns for the airline pipeline (used when no explicit list is given).
+_AIRLINE_RATING_COLS = [
+    "seat_comfort",
+    "cabin_staff_service",
+    "food_and_beverages",
+    "inflight_entertainment",
+    "ground_service",
+    "wifi_and_connectivity",
+    "value_for_money",
+]
+
+
+def _clean_ratings(df: pd.DataFrame, rating_cols: Optional[List[str]] = None) -> pd.DataFrame:
+    if rating_cols is None:
+        rating_cols = _AIRLINE_RATING_COLS
     for col in rating_cols:
         if col in df.columns:
             s = pd.to_numeric(df[col], errors="coerce")
@@ -297,7 +287,8 @@ def _clean_route(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _clean_aircraft(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_aircraft_value(entry):
+    """Normalize a single raw aircraft string to canonical 'Manufacturer Model' or None."""
     # ICAO/IATA shortcodes → canonical "Manufacturer Model" form
     _SHORTCODES: dict[str, str] = {
         "A318": "Airbus A318",
@@ -345,87 +336,306 @@ def _clean_aircraft(df: pd.DataFrame) -> pd.DataFrame:
 
     _VALID_EMBRAER = {135, 140, 145, 170, 175, 190, 195}
 
-    def clean_entry(entry):
-        if pd.isna(entry):
-            return None
-        entry = str(entry).replace("\xa0", " ").strip()
-        if not entry or entry.upper() in ("UNKNOWN", "N/A", "-"):
-            return None
-
-        # Multi-aircraft entries ("Boeing 787 / 777", "A330 / Boeing 787", etc.):
-        # take only the first aircraft mentioned so the result is unambiguous.
-        for sep in ("/", "&"):
-            if sep in entry:
-                entry = entry.split(sep)[0].strip()
-        if "," in entry:
-            entry = entry.split(",")[0].strip()
-
-        # Shortcode lookup: normalise to uppercase, strip hyphens/spaces
-        key = entry.upper().replace("-", "").replace(" ", "")
-        if key in _SHORTCODES:
-            return _SHORTCODES[key]
-
-        # Boeing long-form: preserve subvariant when present
-        # Matches "Boeing 737", "Boeing 737-800", "Boeing 777-300ER", "Boeing 777-300 ER",
-        # "Boeing 787-9", "Boeing 737 Max 8"
-        m = re.search(
-            r"\bBoeing\s+(7\d{2})(?:[- ](MAX\s*\d*|\d{1,3}(?:\s*[A-Z]{1,3})*))?(?=\b|$)",
-            entry,
-            re.IGNORECASE,
-        )
-        if m:
-            base = m.group(1)
-            suffix = re.sub(r"\s+", "", m.group(2) or "").upper()
-            return f"Boeing {base}-{suffix}" if suffix else f"Boeing {base}"
-
-        # Airbus NEO/neo variants with various spellings:
-        # "A320neo", "A320 neo", "A320-neo", "A320N", "A321 NEO", etc.
-        m = re.search(r"\bA(3[012]\d)[-\s]*(?:NEO|N)\b", entry, re.IGNORECASE)
-        if m:
-            num = m.group(1)
-            return f"Airbus A{num}neo"
-
-        # Airbus plain (strip subvariants like "-200" for consistency)
-        # Excludes A322/A329/A366 which are not real Airbus types
-        m = re.search(
-            r"\b(?:Airbus\s+)?A(31[89]|32[01]|33[02-9]|34[0-9]|35[0-9]|380)\b",
-            entry,
-            re.IGNORECASE,
-        )
-        if m:
-            return f"Airbus A{m.group(1).upper()}"
-
-        # Embraer: covers 145/170/175/190/195 (previously only 170/190/195)
-        # Handles "Embraer 190", "Embraer E190", "E-190", "E190"
-        m = re.search(
-            r"\b(?:Embraer\s*(?:E[-\s]?)?|E-?)(\d{3})\b",
-            entry,
-            re.IGNORECASE,
-        )
-        if m and int(m.group(1)) in _VALID_EMBRAER:
-            return f"Embraer {m.group(1)}"
-
-        # Other commercial types
-        m = re.search(r"\bATR\s*(\d{2})\b", entry, re.IGNORECASE)
-        if m:
-            return f"ATR {m.group(1)}"
-        if re.search(r"\bSaab\s+2000\b", entry, re.IGNORECASE):
-            return "Saab 2000"
-
+    if pd.isna(entry):
+        return None
+    entry = str(entry).replace("\xa0", " ").strip()
+    if not entry or entry.upper() in ("UNKNOWN", "N/A", "-"):
         return None
 
-    df["aircraft"] = df["aircraft"].apply(clean_entry)
+    # Multi-aircraft entries ("Boeing 787 / 777", "A330 / Boeing 787", etc.):
+    # take only the first aircraft mentioned so the result is unambiguous.
+    for sep in ("/", "&"):
+        if sep in entry:
+            entry = entry.split(sep)[0].strip()
+    if "," in entry:
+        entry = entry.split(",")[0].strip()
+
+    # Shortcode lookup: normalise to uppercase, strip hyphens/spaces
+    key = entry.upper().replace("-", "").replace(" ", "")
+    if key in _SHORTCODES:
+        return _SHORTCODES[key]
+
+    # Boeing long-form: preserve subvariant when present
+    # Matches "Boeing 737", "Boeing 737-800", "Boeing 777-300ER", "Boeing 777-300 ER",
+    # "Boeing 787-9", "Boeing 737 Max 8"
+    m = re.search(
+        r"\bBoeing\s+(7\d{2})(?:[- ](MAX\s*\d*|\d{1,3}(?:\s*[A-Z]{1,3})*))?(?=\b|$)",
+        entry,
+        re.IGNORECASE,
+    )
+    if m:
+        base = m.group(1)
+        suffix = re.sub(r"\s+", "", m.group(2) or "").upper()
+        return f"Boeing {base}-{suffix}" if suffix else f"Boeing {base}"
+
+    # Airbus NEO/neo variants with various spellings:
+    # "A320neo", "A320 neo", "A320-neo", "A320N", "A321 NEO", etc.
+    m = re.search(r"\bA(3[012]\d)[-\s]*(?:NEO|N)\b", entry, re.IGNORECASE)
+    if m:
+        num = m.group(1)
+        return f"Airbus A{num}neo"
+
+    # Airbus plain (strip subvariants like "-200" for consistency)
+    # Excludes A322/A329/A366 which are not real Airbus types
+    m = re.search(
+        r"\b(?:Airbus\s+)?A(31[89]|32[01]|33[02-9]|34[0-9]|35[0-9]|380)\b",
+        entry,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"Airbus A{m.group(1).upper()}"
+
+    # Embraer: covers 145/170/175/190/195 (previously only 170/190/195)
+    # Handles "Embraer 190", "Embraer E190", "E-190", "E190"
+    m = re.search(
+        r"\b(?:Embraer\s*(?:E[-\s]?)?|E-?)(\d{3})\b",
+        entry,
+        re.IGNORECASE,
+    )
+    if m and int(m.group(1)) in _VALID_EMBRAER:
+        return f"Embraer {m.group(1)}"
+
+    # Other commercial types
+    m = re.search(r"\bATR\s*(\d{2})\b", entry, re.IGNORECASE)
+    if m:
+        return f"ATR {m.group(1)}"
+    if re.search(r"\bSaab\s+2000\b", entry, re.IGNORECASE):
+        return "Saab 2000"
+
+    return None
+
+
+def _clean_aircraft(df: pd.DataFrame) -> pd.DataFrame:
+    df["aircraft"] = df["aircraft"].apply(_normalize_aircraft_value)
     return df
 
 
 def _reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
-    existing = [c for c in cfg.COLUMN_ORDER if c in df.columns]
+    return _reorder(df, cfg.COLUMN_ORDER)
+
+
+def _reorder(df: pd.DataFrame, order: List[str]) -> pd.DataFrame:
+    """Keep only the columns in `order` that exist, in that order."""
+    existing = [c for c in order if c in df.columns]
     return df[existing]
 
 
 def _add_updated_at(df: pd.DataFrame) -> pd.DataFrame:
     df["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return df
+
+
+# ---------------------------------------------------------------------------
+# Combined (flat) cleaning for seat / lounge / airport categories
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CleaningProfile:
+    """Per-category cleaning configuration for the flat combined CSVs."""
+
+    event_date_col: str  # "date_flown" (seat) or "date_visit" (lounge/airport)
+    rating_cols: List[str]  # snake_case star-rated columns (0-5) → Int64, 0 = NA
+    normalize_aircraft_col: Optional[str]  # column to canonicalise (seat only) or None
+    column_order: List[str]  # final processed column order
+
+
+CLEANING_PROFILES: Dict[str, CleaningProfile] = {
+    "seat": CleaningProfile(
+        event_date_col="date_flown",
+        rating_cols=[
+            "seat_legroom",
+            "seat_recline",
+            "seat_width",
+            "aisle_space",
+            "seat_storage",
+            "power_supply",
+            "viewing_tv_screen",
+            "sleep_comfort",
+            "sitting_comfort",
+            "seat_bed_width",
+            "seat_bed_length",
+            "seat_privacy",
+        ],
+        normalize_aircraft_col="aircraft_type",
+        column_order=[
+            "verify",
+            "date_submitted",
+            "date_flown",
+            "customer_name",
+            "nationality",
+            "airline_name",
+            "type_of_traveller",
+            "seat_type",
+            "aircraft_type",
+            "seat_layout",
+            "seat_legroom",
+            "seat_recline",
+            "seat_width",
+            "aisle_space",
+            "seat_storage",
+            "power_supply",
+            "viewing_tv_screen",
+            "sleep_comfort",
+            "sitting_comfort",
+            "seat_bed_width",
+            "seat_bed_length",
+            "seat_privacy",
+            "recommended",
+            "review",
+            "updated_at",
+        ],
+    ),
+    "lounge": CleaningProfile(
+        event_date_col="date_visit",
+        rating_cols=[
+            "comfort",
+            "cleanliness",
+            "bar_and_beverages",
+            "catering",
+            "washrooms",
+            "wifi_connectivity",
+            "staff_service",
+        ],
+        normalize_aircraft_col=None,
+        column_order=[
+            "verify",
+            "date_submitted",
+            "date_visit",
+            "customer_name",
+            "nationality",
+            "airline_name",
+            "lounge_name",
+            "airport",
+            "type_of_lounge",
+            "type_of_traveller",
+            "comfort",
+            "cleanliness",
+            "bar_and_beverages",
+            "catering",
+            "washrooms",
+            "wifi_connectivity",
+            "staff_service",
+            "recommended",
+            "review",
+            "updated_at",
+        ],
+    ),
+    "airport": CleaningProfile(
+        event_date_col="date_visit",
+        rating_cols=[
+            "queuing_times",
+            "terminal_cleanliness",
+            "terminal_seating",
+            "terminal_signs",
+            "food_beverages",
+            "airport_shopping",
+            "airport_staff",
+            "wifi_connectivity",
+        ],
+        normalize_aircraft_col=None,
+        column_order=[
+            "verify",
+            "date_submitted",
+            "date_visit",
+            "customer_name",
+            "nationality",
+            "airport_name",
+            "experience_at_airport",
+            "type_of_traveller",
+            "queuing_times",
+            "terminal_cleanliness",
+            "terminal_seating",
+            "terminal_signs",
+            "food_beverages",
+            "airport_shopping",
+            "airport_staff",
+            "wifi_connectivity",
+            "recommended",
+            "review",
+            "updated_at",
+        ],
+    ),
+}
+
+
+def combined_paths(category: str) -> Tuple[Path, Path]:
+    """Return (raw_input_path, processed_output_path) for a combined-CSV category.
+
+    Input filename comes from the scraper registry (single source of truth);
+    output mirrors it with ``_raw`` → ``_processed``.
+    """
+    raw_name = _SCRAPER_CATEGORIES[category].combined_filename
+    if not raw_name:
+        raise ValueError(f"Category '{category}' has no combined CSV to process.")
+    return (
+        paths.LANDING_DIR / raw_name,
+        paths.LANDING_DIR / raw_name.replace("_raw", "_processed"),
+    )
+
+
+def _clean_combined_df(df: pd.DataFrame, category: str) -> pd.DataFrame:
+    """Apply the profile-driven cleaning pipeline for seat/lounge/airport."""
+    if category not in CLEANING_PROFILES:
+        raise ValueError(
+            f"Unknown combined category '{category}'. "
+            f"Expected one of {sorted(CLEANING_PROFILES)}."
+        )
+    profile = CLEANING_PROFILES[category]
+
+    df = _rename_columns(df)
+    df = _clean_date_submitted(df, coerce=True)
+    df = _clean_nationality(df)
+    df = _clean_review_body(df)
+    df = _clean_month_year(df, profile.event_date_col)
+    df = _clean_recommended(df)
+    df = _clean_ratings(df, profile.rating_cols)
+    if profile.normalize_aircraft_col and profile.normalize_aircraft_col in df.columns:
+        df[profile.normalize_aircraft_col] = df[profile.normalize_aircraft_col].apply(
+            _normalize_aircraft_value
+        )
+    df = _add_updated_at(df)
+    df = _reorder(df, profile.column_order)
+    return df
+
+
+def clean_combined(category: str) -> Path:
+    """Clean a flat combined raw CSV (seat/lounge/airport) into a processed CSV.
+
+    Reads  landing/all_<category>_review_raw.csv
+    Writes landing/all_<category>_review_processed.csv
+    """
+    input_path, output_path = combined_paths(category)
+
+    df = pd.read_csv(input_path)
+    logger.info("Loaded %d rows from %s", len(df), input_path)
+
+    df = _clean_combined_df(df, category)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.info("Saved %d rows → %s", len(df), output_path)
+    return output_path
+
+
+def clean_file(category: str, input_path: Path, output_path: Path) -> Path:
+    """Clean one date-partitioned raw CSV → processed CSV, dispatching by category.
+
+    airline → the full airline pipeline (route + aircraft + airline column order);
+    seat/lounge/airport → the profile-driven pipeline.
+    """
+    input_path, output_path = Path(input_path), Path(output_path)
+    if category == "airline":
+        return clean(input_path, output_path)
+
+    df = pd.read_csv(input_path)
+    logger.info("Loaded %d rows from %s", len(df), input_path)
+    df = _clean_combined_df(df, category)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.info("Saved %d rows → %s", len(df), output_path)
+    return output_path
 
 
 # ---------------------------------------------------------------------------
@@ -438,33 +648,49 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Clean raw Skytrax reviews")
     parser.add_argument(
+        "--category",
+        choices=sorted(_SCRAPER_CATEGORIES),
+        default="airline",
+        help="Review category to clean (default: airline).",
+    )
+    parser.add_argument(
+        "--combined",
+        action="store_true",
+        help="Ad-hoc: clean the flat landing/all_<cat>_review_raw.csv (seat/lounge/airport).",
+    )
+    parser.add_argument(
         "--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)"
     )
     parser.add_argument("--yesterday", action="store_true", help="Process yesterday's file")
-    parser.add_argument("--all", action="store_true", help="Process all raw files in landing/raw/")
+    parser.add_argument(
+        "--all", action="store_true", help="Process all raw files for the category."
+    )
     args = parser.parse_args()
 
-    if args.all:
-        raw_dir = LANDING_DIR / "raw"
+    if args.combined:
+        output_path = clean_combined(args.category)
+        print(f"Done: {output_path}")
+    elif args.all:
+        raw_dir = paths.LANDING_DIR / "raw" / paths.partition(args.category)
         raw_files = sorted(raw_dir.glob("**/raw_data_*.csv"))
         if not raw_files:
             raise FileNotFoundError(f"No raw files found in {raw_dir}")
         for raw_file in raw_files:
             date_str = raw_file.stem.replace("raw_data_", "")
             run_date = datetime.strptime(date_str, "%Y%m%d").date()
-            output_path = get_output_path(run_date)
-            clean(raw_file, output_path)
+            output_path = paths.processed_local_path(args.category, run_date)
+            clean_file(args.category, raw_file, output_path)
             print(f"Done: {output_path}")
     else:
         run_date = args.date or (
             date.today() - timedelta(days=1) if args.yesterday else date.today()
         )
 
-        input_path = get_input_path(run_date)
-        output_path = get_output_path(run_date)
+        input_path = paths.raw_local_path(args.category, run_date)
+        output_path = paths.processed_local_path(args.category, run_date)
 
         if not input_path.exists():
             raise FileNotFoundError(f"Raw file not found: {input_path}")
 
-        clean(input_path, output_path)
+        clean_file(args.category, input_path, output_path)
         print(f"Done: {output_path}")
