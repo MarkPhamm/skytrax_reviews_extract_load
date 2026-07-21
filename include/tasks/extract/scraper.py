@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://www.airlinequality.com"
 PAGE_SIZE = 100
 
+# Link text that isn't an entity name (e.g. a "Read more" link pointing at the
+# same URL as the real name link) — fall back to the slug-derived title instead.
+_GENERIC_LINK_TEXT = {"read more", "more", "details", "view"}
+
 
 @dataclass(frozen=True)
 class ReviewCategory:
@@ -140,8 +144,8 @@ class ReviewScraper:
 
         soup = BeautifulSoup(response.content, "html.parser")
         sub = self.category.href_substring
-        seen = set()
-        entities = []
+        by_url: Dict[str, str] = {}
+        order: List[str] = []
 
         for link in soup.find_all("a", href=True):
             href = link["href"]
@@ -149,14 +153,22 @@ class ReviewScraper:
             if sub not in href or href == sub:
                 continue
 
-            name = link.get_text(strip=True) or (
-                href.split(sub)[-1].split("/")[0].replace("-", " ").title()
-            )
+            text = link.get_text(strip=True)
+            fallback = href.split(sub)[-1].split("/")[0].replace("-", " ").title()
+            # Some index-page entries have a second "Read more"-style link
+            # pointing at the same URL — treat that as no name and fall back.
+            name = text if text and text.lower() not in _GENERIC_LINK_TEXT else fallback
             url = urljoin(BASE_URL, href) if href.startswith("/") else href
 
-            if name and url not in seen:
-                seen.add(url)
-                entities.append((name, url))
+            if url not in by_url:
+                by_url[url] = name
+                order.append(url)
+            elif by_url[url] == fallback and name != fallback:
+                # An earlier link for this URL only yielded the generic
+                # fallback — prefer the real name found on a later link.
+                by_url[url] = name
+
+        entities = [(by_url[url], url) for url in order]
 
         if self.max_entities:
             entities = entities[: self.max_entities]
@@ -255,7 +267,18 @@ class ReviewScraper:
         return found.text.strip() if found else None
 
     def _extract_country(self, article: BeautifulSoup) -> Optional[str]:
-        match = article.find(string=lambda t: t and "(" in t and ")" in t)
+        # The country sits as "(Country)" text right next to the reviewer's
+        # name span, inside the review's header — NOT anywhere in the
+        # article. Searching the whole article (as this used to) can match
+        # parenthesised text inside the review body itself (flight numbers,
+        # aircraft codes, ages) and leak garbage into this field.
+        name_span = article.find("span", itemprop="name")
+        if not name_span:
+            return None
+        header = name_span.find_parent("h3") or name_span.parent
+        if not header:
+            return None
+        match = header.find(string=lambda t: t and "(" in t and ")" in t)
         if not match:
             return None
         # pull text inside the outermost parens

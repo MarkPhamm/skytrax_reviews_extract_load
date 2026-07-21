@@ -24,9 +24,10 @@ def landing(tmp_path, monkeypatch):
 
 
 def _write_raw(landing, category, rows):
-    """Write a synthetic combined raw CSV under the category's raw filename."""
+    """Write a synthetic combined raw CSV under landing/all/ (flat-CSV layout)."""
     raw_name = proc._SCRAPER_CATEGORIES[category].combined_filename
-    path = landing / raw_name
+    path = landing / "all" / raw_name
+    path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(path, index=False)
     return path
 
@@ -93,7 +94,7 @@ def test_clean_combined_seat(landing):
     _write_raw(landing, "seat", _SEAT_ROWS)
     out = proc.clean_combined("seat")
 
-    assert out == landing / "all_seats_review_processed.csv"
+    assert out == landing / "all" / "all_seats_review_processed.csv"
     df = pd.read_csv(out)
 
     # Column order matches the seat profile exactly.
@@ -160,7 +161,7 @@ def test_clean_combined_lounge(landing):
     _write_raw(landing, "lounge", _LOUNGE_ROWS)
     out = proc.clean_combined("lounge")
 
-    assert out == landing / "all_lounge_review_processed.csv"
+    assert out == landing / "all" / "all_lounge_review_processed.csv"
     df = pd.read_csv(out)
 
     assert list(df.columns) == proc.CLEANING_PROFILES["lounge"].column_order
@@ -202,7 +203,7 @@ def test_clean_combined_airport(landing):
     _write_raw(landing, "airport", _AIRPORT_ROWS)
     out = proc.clean_combined("airport")
 
-    assert out == landing / "all_airport_review_processed.csv"
+    assert out == landing / "all" / "all_airport_review_processed.csv"
     df = pd.read_csv(out)
 
     assert list(df.columns) == proc.CLEANING_PROFILES["airport"].column_order

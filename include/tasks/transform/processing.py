@@ -40,6 +40,7 @@ def clean(input_path: Path, output_path: Path) -> Path:
     """
     df = pd.read_csv(input_path)
     logger.info("Loaded %d rows from %s", len(df), input_path)
+    df = _drop_duplicate_rows(df, input_path)
 
     df = _rename_columns(df)
     df = _clean_date_submitted(df)
@@ -62,6 +63,16 @@ def clean(input_path: Path, output_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Transformation steps (pure functions — each takes and returns a DataFrame)
 # ---------------------------------------------------------------------------
+
+
+def _drop_duplicate_rows(df: pd.DataFrame, source: Union[str, Path]) -> pd.DataFrame:
+    """Drop exact-duplicate rows (repeat scrapes merged into the same raw CSV)."""
+    before = len(df)
+    df = df.drop_duplicates().reset_index(drop=True)
+    dropped = before - len(df)
+    if dropped:
+        logger.info("Dropped %d duplicate row(s) from %s", dropped, source)
+    return df
 
 
 def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -563,14 +574,16 @@ def combined_paths(category: str) -> Tuple[Path, Path]:
     """Return (raw_input_path, processed_output_path) for a combined-CSV category.
 
     Input filename comes from the scraper registry (single source of truth);
-    output mirrors it with ``_raw`` → ``_processed``.
+    output mirrors it with ``_raw`` → ``_processed``. Flat combined CSVs live
+    under landing/all/ (see scripts/migrate_to_typed_layout.py's FLAT_DIR).
     """
     raw_name = _SCRAPER_CATEGORIES[category].combined_filename
     if not raw_name:
         raise ValueError(f"Category '{category}' has no combined CSV to process.")
+    flat_dir = paths.LANDING_DIR / "all"
     return (
-        paths.LANDING_DIR / raw_name,
-        paths.LANDING_DIR / raw_name.replace("_raw", "_processed"),
+        flat_dir / raw_name,
+        flat_dir / raw_name.replace("_raw", "_processed"),
     )
 
 
@@ -609,6 +622,7 @@ def clean_combined(category: str) -> Path:
 
     df = pd.read_csv(input_path)
     logger.info("Loaded %d rows from %s", len(df), input_path)
+    df = _drop_duplicate_rows(df, input_path)
 
     df = _clean_combined_df(df, category)
 
@@ -630,6 +644,7 @@ def clean_file(category: str, input_path: Path, output_path: Path) -> Path:
 
     df = pd.read_csv(input_path)
     logger.info("Loaded %d rows from %s", len(df), input_path)
+    df = _drop_duplicate_rows(df, input_path)
     df = _clean_combined_df(df, category)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
