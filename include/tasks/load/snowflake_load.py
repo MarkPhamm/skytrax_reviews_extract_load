@@ -1,9 +1,9 @@
 """
 Load processed CSVs from S3 into Snowflake via COPY INTO.
 
-For each review date:
-  S3: processed/YYYY/MM/clean_data_YYYYMMDD.csv
-  → Snowflake: SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS
+For each (review type, review date):
+  S3: processed/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
+  → Snowflake: SKYTRAX_REVIEWS_DB.RAW.<TYPE>_REVIEWS
 
 SQL templates are read from include/sql/ — never inlined here.
 
@@ -16,9 +16,27 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from include.tasks.common import paths
+
 logger = logging.getLogger(__name__)
 
 _SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
+
+# Category key -> Snowflake table name.
+TABLE = {
+    "airline": "AIRLINE_REVIEWS",
+    "seat": "SEAT_REVIEWS",
+    "lounge": "LOUNGE_REVIEWS",
+    "airport": "AIRPORT_REVIEWS",
+}
+
+
+def table_name(category: str) -> str:
+    """Fully-qualified Snowflake table for a category key."""
+    try:
+        return f"SKYTRAX_REVIEWS_DB.RAW.{TABLE[category]}"
+    except KeyError:
+        raise ValueError(f"Unknown review category '{category}'. Expected one of {sorted(TABLE)}.")
 
 
 def _read_sql(filename: str) -> str:
@@ -36,14 +54,15 @@ def _get_hook(conn_id: str = "snowflake_default"):
 # ---------------------------------------------------------------------------
 
 
-def ensure_table(conn_id: str = "snowflake_default") -> None:
-    """Create DB, schema, and table if they don't exist."""
+def ensure_table(category: str, conn_id: str = "snowflake_default") -> None:
+    """Create DB, schema, and the category's table if they don't exist."""
     hook = _get_hook(conn_id)
-    for statement in _read_sql("create_table.sql").split(";"):
+    ddl = _read_sql(f"create_table_{paths.partition(category)}.sql")
+    for statement in ddl.split(";"):
         statement = statement.strip()
         if statement:
             hook.run(statement)
-    logger.info("Snowflake table ready: SKYTRAX_REVIEWS_DB.RAW.AIRLINE_REVIEWS")
+    logger.info("Snowflake table ready: %s", table_name(category))
 
 
 def ensure_stage(bucket: str, role_arn: str, conn_id: str = "snowflake_default") -> None:
@@ -58,15 +77,14 @@ def ensure_stage(bucket: str, role_arn: str, conn_id: str = "snowflake_default")
 
 
 # ---------------------------------------------------------------------------
-# Per-date load
+# Per-(type, date) load
 # ---------------------------------------------------------------------------
 
 
-def copy_into(review_date: date, conn_id: str = "snowflake_default") -> None:
-    """COPY INTO Snowflake for one review date's processed CSV."""
-    from include.tasks.load.s3_upload import processed_s3_key
-
-    s3_key = processed_s3_key(review_date)
-    sql = _read_sql("copy_into.sql").replace("{{ s3_key }}", s3_key)
+def copy_into(category: str, review_date: date, conn_id: str = "snowflake_default") -> None:
+    """COPY INTO the category's table for one review date's processed CSV."""
+    s3_key = paths.processed_key(category, review_date)
+    table = table_name(category)
+    sql = _read_sql("copy_into.sql").replace("{{ table }}", table).replace("{{ s3_key }}", s3_key)
     _get_hook(conn_id).run(sql)
-    logger.info("Loaded %s → AIRLINE_REVIEWS", s3_key)
+    logger.info("Loaded %s → %s", s3_key, table)

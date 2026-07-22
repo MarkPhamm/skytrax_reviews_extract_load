@@ -3,14 +3,13 @@ DAG: skytrax_process
 
 Triggered automatically when dag_crawl emits RAW_DATASET.
 
-Reads the list of review dates written by dag_crawl (via LAST_CRAWL_DATES
-Airflow Variable), then for each date:
-  1. download_raw   — pull raw CSV from S3 → landing/raw/ (no-op when local)
-  2. clean_date     — run processing pipeline → landing/processed/YYYY/MM/
+Reads the {category: [dates]} map written by dag_crawl (LAST_CRAWL_DATES Airflow
+Variable), then for each (review type, review date):
+  1. download_raw     — pull raw CSV from S3 → landing/raw/<type>/… (no-op when local)
+  2. clean_one        — run the type-aware cleaning pipeline → landing/processed/<type>/…
   3. upload_processed — push clean CSV to S3 (no-op when local)
 
-Each review date is processed as an independent dynamically-mapped task,
-so you get one task instance per date in the Airflow UI.
+Each (type, date) is an independent dynamically-mapped task instance.
 """
 
 from __future__ import annotations
@@ -27,11 +26,9 @@ from airflow.datasets import Dataset
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
-from include.tasks.extract.scraper import LANDING_DIR
-from include.tasks.load.s3_upload import raw_s3_key
+from include.tasks.common import paths
 from include.tasks.load.s3_upload import upload_processed as _upload
-from include.tasks.transform.processing import clean as _clean
-from include.tasks.transform.processing import get_output_path
+from include.tasks.transform.processing import clean_file
 
 RAW_DATASET = Dataset("skytrax://raw")
 PROCESSED_DATASET = Dataset("skytrax://processed")
@@ -41,6 +38,11 @@ default_args = {
     "retries": 2,
     "retry_delay": timedelta(seconds=0),
 }
+
+
+def _entity_col(category: str) -> str:
+    """Column holding the scraped entity name (used to drop 'Read more' junk rows)."""
+    return "airport_name" if category == "airport" else "airline_name"
 
 
 @dag(
@@ -55,28 +57,25 @@ default_args = {
 def process_dag():
 
     @task()
-    def get_dates_to_process() -> list[str]:
-        """Read the date list written by dag_crawl."""
-        raw = Variable.get("LAST_CRAWL_DATES", default_var="[]")
-        return json.loads(raw)
+    def get_work_items() -> list[dict]:
+        """Expand the {category: [dates]} map into [{category, date_str}, ...]."""
+        mapping = json.loads(Variable.get("LAST_CRAWL_DATES", default_var="{}"))
+        return [
+            {"category": category, "date_str": d}
+            for category, dates in mapping.items()
+            for d in dates
+        ]
 
     @task()
-    def download_raw(date_str: str) -> str:
+    def download_raw(category: str, date_str: str) -> dict:
         """S3 mode: pull raw CSV from S3. Local mode: already on disk."""
         review_date = date.fromisoformat(date_str)
-        local_path = (
-            LANDING_DIR
-            / "raw"
-            / review_date.strftime("%Y")
-            / review_date.strftime("%m")
-            / f"raw_data_{review_date.strftime('%Y%m%d')}.csv"
-        )
+        local_path = paths.raw_local_path(category, review_date)
 
         if os.getenv("STORAGE_MODE", "local") == "s3":
             bucket = os.environ["S3_BUCKET"]
-            s3_key = raw_s3_key(review_date)
+            s3_key = paths.raw_key(category, review_date)
             local_path.parent.mkdir(parents=True, exist_ok=True)
-
             try:
                 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
@@ -89,51 +88,43 @@ def process_dag():
         if not local_path.exists():
             raise FileNotFoundError(f"Raw file not found: {local_path}")
 
-        return str(local_path)
+        return {"category": category, "date_str": date_str, "raw_path": str(local_path)}
 
     @task()
-    def clean_date(raw_path: str) -> str:
-        """Run the full cleaning pipeline for one date's raw CSV."""
-        # Derive review date from the raw filename: raw_data_YYYYMMDD.csv
-        stem = Path(raw_path).stem  # raw_data_20260312
-        date_part = stem.split("_")[-1]  # 20260312
-        review_date = date(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:]))
+    def clean_one(category: str, date_str: str, raw_path: str) -> dict:
+        """Filter scraper junk then run the type-aware cleaning pipeline."""
+        review_date = date.fromisoformat(date_str)
 
-        # Filter scraper junk before cleaning
         df = pd.read_csv(raw_path, low_memory=False)
-        df = df[df["airline_name"] != "Read more"]
+        entity_col = _entity_col(category)
+        if entity_col in df.columns:
+            df = df[df[entity_col] != "Read more"]
 
-        output_path = get_output_path(review_date)
+        output_path = paths.processed_local_path(category, review_date)
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as tmp:
             df.to_csv(tmp, index=False)
             tmp_path = tmp.name
         try:
-            _clean(Path(tmp_path), output_path)
+            clean_file(category, Path(tmp_path), output_path)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
-        return str(output_path)
+
+        return {"category": category, "date_str": date_str, "processed_path": str(output_path)}
 
     @task(outlets=[PROCESSED_DATASET])
-    def upload_processed(processed_path: str) -> str | None:
+    def upload_processed(category: str, date_str: str, processed_path: str) -> str | None:
         """Upload one processed CSV to S3 (skipped when STORAGE_MODE=local)."""
         if os.getenv("STORAGE_MODE", "local") == "local":
             return None
-
-        stem = Path(processed_path).stem  # clean_data_20260312
-        date_part = stem.split("_")[-1]
-        review_date = date(int(date_part[:4]), int(date_part[4:6]), int(date_part[6:]))
-
         bucket = os.environ["S3_BUCKET"]
-        return _upload(review_date, bucket=bucket, use_airflow_hook=True)
+        return _upload(category, date.fromisoformat(date_str), bucket=bucket, use_airflow_hook=True)
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 
-    dates = get_dates_to_process()
-
-    # Dynamic task mapping: one task instance per review date
-    raw_paths = download_raw.expand(date_str=dates)
-    processed_paths = clean_date.expand(raw_path=raw_paths)
-    upload_processed.expand(processed_path=processed_paths)
+    work_items = get_work_items()
+    raw = download_raw.expand_kwargs(work_items)
+    cleaned = clean_one.expand_kwargs(raw)
+    upload_processed.expand_kwargs(cleaned)
 
 
 process_dag()

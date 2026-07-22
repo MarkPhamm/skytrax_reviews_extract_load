@@ -3,8 +3,8 @@ DAG: skytrax_snowflake
 
 Triggered automatically when dag_process emits PROCESSED_DATASET.
 
-Infrastructure (database, schema, table, stage) is managed by Terraform.
-This DAG only runs COPY INTO for each review date.
+Infrastructure (database, schema, per-type tables, stage) is managed by Terraform.
+This DAG only runs COPY INTO for each (review type, review date) into its table.
 
 STORAGE_MODE=local skips this DAG entirely — no Snowflake needed for local dev.
 """
@@ -42,23 +42,26 @@ default_args = {
 def snowflake_dag():
 
     @task()
-    def get_dates() -> list[str]:
-        """Read the date list written by dag_crawl. Returns [] when local."""
+    def get_work_items() -> list[dict]:
+        """Expand {category: [dates]} into [{category, date_str}, ...]. Empty when local."""
         if os.getenv("STORAGE_MODE", "local") == "local":
             return []
 
-        raw = Variable.get("LAST_CRAWL_DATES", default_var="[]")
-        return json.loads(raw)
+        mapping = json.loads(Variable.get("LAST_CRAWL_DATES", default_var="{}"))
+        return [
+            {"category": category, "date_str": d}
+            for category, dates in mapping.items()
+            for d in dates
+        ]
 
     @task()
-    def load_date(date_str: str) -> None:
-        """COPY INTO Snowflake for one review date."""
-        copy_into(date.fromisoformat(date_str))
+    def load_one(category: str, date_str: str) -> None:
+        """COPY INTO the category's Snowflake table for one review date."""
+        copy_into(category, date.fromisoformat(date_str))
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 
-    dates = get_dates()
-    load_date.expand(date_str=dates)
+    load_one.expand_kwargs(get_work_items())
 
 
 snowflake_dag()

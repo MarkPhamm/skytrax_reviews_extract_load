@@ -130,6 +130,295 @@ resource "snowflake_table" "airline_reviews" {
 }
 
 # ---------------------------------------------------------------------------
+# Seat reviews table  (matches processing.CLEANING_PROFILES["seat"])
+# ---------------------------------------------------------------------------
+
+resource "snowflake_table" "seat_reviews" {
+  database = snowflake_database.skytrax.name
+  schema   = snowflake_schema.raw.name
+  name     = "SEAT_REVIEWS"
+
+  column {
+    name = "VERIFY"
+    type = "BOOLEAN"
+  }
+  column {
+    name = "DATE_SUBMITTED"
+    type = "DATE"
+  }
+  column {
+    name = "DATE_FLOWN"
+    type = "DATE"
+  }
+  column {
+    name = "CUSTOMER_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "NATIONALITY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "AIRLINE_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TYPE_OF_TRAVELLER"
+    type = "VARCHAR"
+  }
+  column {
+    name = "SEAT_TYPE"
+    type = "VARCHAR"
+  }
+  column {
+    name = "AIRCRAFT_TYPE"
+    type = "VARCHAR"
+  }
+  column {
+    name = "SEAT_LAYOUT"
+    type = "VARCHAR"
+  }
+  column {
+    name = "SEAT_LEGROOM"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SEAT_RECLINE"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SEAT_WIDTH"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "AISLE_SPACE"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SEAT_STORAGE"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "POWER_SUPPLY"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "VIEWING_TV_SCREEN"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SLEEP_COMFORT"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SITTING_COMFORT"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SEAT_BED_WIDTH"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SEAT_BED_LENGTH"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "SEAT_PRIVACY"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "RECOMMENDED"
+    type = "BOOLEAN"
+  }
+  column {
+    name = "REVIEW"
+    type = "VARCHAR"
+  }
+  column {
+    name = "UPDATED_AT"
+    type = "TIMESTAMP_NTZ"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Lounge reviews table  (matches processing.CLEANING_PROFILES["lounge"])
+# ---------------------------------------------------------------------------
+
+resource "snowflake_table" "lounge_reviews" {
+  database = snowflake_database.skytrax.name
+  schema   = snowflake_schema.raw.name
+  name     = "LOUNGE_REVIEWS"
+
+  column {
+    name = "VERIFY"
+    type = "BOOLEAN"
+  }
+  column {
+    name = "DATE_SUBMITTED"
+    type = "DATE"
+  }
+  column {
+    name = "DATE_VISIT"
+    type = "DATE"
+  }
+  column {
+    name = "CUSTOMER_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "NATIONALITY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "AIRLINE_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "LOUNGE_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "AIRPORT"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TYPE_OF_LOUNGE"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TYPE_OF_TRAVELLER"
+    type = "VARCHAR"
+  }
+  column {
+    name = "COMFORT"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "CLEANLINESS"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "BAR_AND_BEVERAGES"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "CATERING"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "WASHROOMS"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "WIFI_CONNECTIVITY"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "STAFF_SERVICE"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "RECOMMENDED"
+    type = "BOOLEAN"
+  }
+  column {
+    name = "REVIEW"
+    type = "VARCHAR"
+  }
+  column {
+    name = "UPDATED_AT"
+    type = "TIMESTAMP_NTZ"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Airport reviews table  (matches processing.CLEANING_PROFILES["airport"])
+# ---------------------------------------------------------------------------
+
+resource "snowflake_table" "airport_reviews" {
+  database = snowflake_database.skytrax.name
+  schema   = snowflake_schema.raw.name
+  name     = "AIRPORT_REVIEWS"
+
+  column {
+    name = "VERIFY"
+    type = "BOOLEAN"
+  }
+  column {
+    name = "DATE_SUBMITTED"
+    type = "DATE"
+  }
+  column {
+    name = "DATE_VISIT"
+    type = "DATE"
+  }
+  column {
+    name = "CUSTOMER_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "NATIONALITY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "AIRPORT_NAME"
+    type = "VARCHAR"
+  }
+  column {
+    name = "EXPERIENCE_AT_AIRPORT"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TYPE_OF_TRAVELLER"
+    type = "VARCHAR"
+  }
+  column {
+    name = "QUEUING_TIMES"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "TERMINAL_CLEANLINESS"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "TERMINAL_SEATING"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "TERMINAL_SIGNS"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "FOOD_BEVERAGES"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "AIRPORT_SHOPPING"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "AIRPORT_STAFF"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "WIFI_CONNECTIVITY"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "RECOMMENDED"
+    type = "BOOLEAN"
+  }
+  column {
+    name = "REVIEW"
+    type = "VARCHAR"
+  }
+  column {
+    name = "UPDATED_AT"
+    type = "TIMESTAMP_NTZ"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # S3 External Stage
 # ---------------------------------------------------------------------------
 

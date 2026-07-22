@@ -1,12 +1,14 @@
 """
 Upload landing files to S3 (or stay local when STORAGE_MODE=local).
 
-Upload paths mirror the local layout exactly:
-  local:  landing/raw/YYYY/MM/raw_data_YYYYMMDD.csv
-  S3:     s3://<bucket>/raw/YYYY/MM/raw_data_YYYYMMDD.csv
+Upload paths mirror the local layout exactly (type-first partitions):
+  local:  landing/raw/<type>/YYYY/MM/raw_data_YYYYMMDD.csv
+  S3:     s3://<bucket>/raw/<type>/YYYY/MM/raw_data_YYYYMMDD.csv
 
-  local:  landing/processed/YYYY/MM/clean_data_YYYYMMDD.csv
-  S3:     s3://<bucket>/processed/YYYY/MM/clean_data_YYYYMMDD.csv
+  local:  landing/processed/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
+  S3:     s3://<bucket>/processed/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
+
+Keys/paths are built by ``include.tasks.common.paths`` (single source of truth).
 
 Environment variables
 ---------------------
@@ -23,10 +25,10 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from include.tasks.common import paths
+from include.tasks.common.paths import LANDING_DIR  # noqa: F401  (re-exported for callers)
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LANDING_DIR = Path(os.getenv("LANDING_DIR", _PROJECT_ROOT / "landing"))
+logger = logging.getLogger(__name__)
 
 STORAGE_MODE = os.getenv("STORAGE_MODE", "s3")  # "s3" | "local"
 S3_BUCKET = os.getenv("S3_BUCKET", "")
@@ -34,38 +36,24 @@ AWS_CONN_ID = os.getenv("AWS_CONN_ID", "aws_s3_connection")
 
 
 # ---------------------------------------------------------------------------
-# Path helpers (same scheme as scraper / processing)
+# Path helpers (type-aware; delegate to include.tasks.common.paths)
 # ---------------------------------------------------------------------------
 
 
-def raw_local_path(run_date: date) -> Path:
-    return (
-        LANDING_DIR
-        / "raw"
-        / run_date.strftime("%Y")
-        / run_date.strftime("%m")
-        / f"raw_data_{run_date.strftime('%Y%m%d')}.csv"
-    )
+def raw_local_path(category: str, run_date: date) -> Path:
+    return paths.raw_local_path(category, run_date)
 
 
-def processed_local_path(run_date: date) -> Path:
-    return (
-        LANDING_DIR
-        / "processed"
-        / run_date.strftime("%Y")
-        / run_date.strftime("%m")
-        / f"clean_data_{run_date.strftime('%Y%m%d')}.csv"
-    )
+def processed_local_path(category: str, run_date: date) -> Path:
+    return paths.processed_local_path(category, run_date)
 
 
-def raw_s3_key(run_date: date) -> str:
-    y, m = run_date.strftime("%Y"), run_date.strftime("%m")
-    return f"raw/{y}/{m}/raw_data_{run_date.strftime('%Y%m%d')}.csv"
+def raw_s3_key(category: str, run_date: date) -> str:
+    return paths.raw_key(category, run_date)
 
 
-def processed_s3_key(run_date: date) -> str:
-    y, m = run_date.strftime("%Y"), run_date.strftime("%m")
-    return f"processed/{y}/{m}/clean_data_{run_date.strftime('%Y%m%d')}.csv"
+def processed_s3_key(category: str, run_date: date) -> str:
+    return paths.processed_key(category, run_date)
 
 
 # ---------------------------------------------------------------------------
@@ -123,17 +111,18 @@ def upload_file(
 
 
 def upload_raw(
+    category: str,
     run_date: date,
     bucket: Optional[str] = None,
     use_airflow_hook: bool = False,
 ) -> Optional[str]:
     """
-    Upload the raw CSV for run_date to S3.
+    Upload the raw CSV for (category, run_date) to S3.
 
     Returns the s3:// URI, or None when STORAGE_MODE=local.
     """
     if STORAGE_MODE == "local":
-        logger.info("STORAGE_MODE=local — skipping raw upload for %s", run_date)
+        logger.info("STORAGE_MODE=local — skipping raw upload for %s %s", category, run_date)
         return None
 
     bucket = bucket or S3_BUCKET
@@ -141,25 +130,26 @@ def upload_raw(
         raise ValueError("S3_BUCKET env var is not set and no bucket was passed")
 
     return upload_file(
-        local_path=raw_local_path(run_date),
-        s3_key=raw_s3_key(run_date),
+        local_path=raw_local_path(category, run_date),
+        s3_key=raw_s3_key(category, run_date),
         bucket=bucket,
         use_airflow_hook=use_airflow_hook,
     )
 
 
 def upload_processed(
+    category: str,
     run_date: date,
     bucket: Optional[str] = None,
     use_airflow_hook: bool = False,
 ) -> Optional[str]:
     """
-    Upload the processed CSV for run_date to S3.
+    Upload the processed CSV for (category, run_date) to S3.
 
     Returns the s3:// URI, or None when STORAGE_MODE=local.
     """
     if STORAGE_MODE == "local":
-        logger.info("STORAGE_MODE=local — skipping processed upload for %s", run_date)
+        logger.info("STORAGE_MODE=local — skipping processed upload for %s %s", category, run_date)
         return None
 
     bucket = bucket or S3_BUCKET
@@ -167,8 +157,8 @@ def upload_processed(
         raise ValueError("S3_BUCKET env var is not set and no bucket was passed")
 
     return upload_file(
-        local_path=processed_local_path(run_date),
-        s3_key=processed_s3_key(run_date),
+        local_path=processed_local_path(category, run_date),
+        s3_key=processed_s3_key(category, run_date),
         bucket=bucket,
         use_airflow_hook=use_airflow_hook,
     )
@@ -186,6 +176,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Upload landing files to S3")
     parser.add_argument(
+        "--category",
+        choices=sorted(paths.PARTITION),
+        default="airline",
+        help="Review category to upload (default: airline).",
+    )
+    parser.add_argument(
         "--date", type=date.fromisoformat, default=None, help="Run date YYYY-MM-DD (default: today)"
     )
     parser.add_argument("--yesterday", action="store_true", help="Upload yesterday's files")
@@ -199,11 +195,11 @@ if __name__ == "__main__":
     run_date = args.date or (date.today() - timedelta(days=1) if args.yesterday else date.today())
 
     if not args.processed_only:
-        uri = upload_raw(run_date, bucket=args.bucket)
+        uri = upload_raw(args.category, run_date, bucket=args.bucket)
         if uri:
             print(f"Raw      → {uri}")
 
     if not args.raw_only:
-        uri = upload_processed(run_date, bucket=args.bucket)
+        uri = upload_processed(args.category, run_date, bucket=args.bucket)
         if uri:
             print(f"Processed → {uri}")

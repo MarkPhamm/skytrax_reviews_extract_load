@@ -1,13 +1,13 @@
 """
 DAG: skytrax_crawl
 
-Scrapes all airlines from airlinequality.com, grouped A-Z (26 parallel tasks).
-Reviews are split by their actual review date and written as individual CSVs:
+Scrapes all four review types from airlinequality.com and writes date-partitioned
+raw CSVs, one file per (type, review date):
 
-  landing/raw/YYYY/MM/raw_data_YYYYMMDD.csv  (one file per review date)
+  landing/raw/<type>/YYYY/MM/raw_data_YYYYMMDD.csv
 
-A full scrape will produce hundreds of files going back to 2010.
-Daily incremental runs produce only yesterday's file.
+A full scrape produces hundreds of files per type going back years.
+Daily incremental runs produce only yesterday's files.
 
 Params:
   full_scrape (bool, default False):
@@ -19,19 +19,20 @@ from __future__ import annotations
 
 import json
 import os
-import string
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
-import pandas as pd
 from airflow.datasets import Dataset
-from airflow.decorators import dag, task, task_group
+from airflow.decorators import dag, task
 from airflow.models import Param, Variable
+from airflow.operators.python import get_current_context
 
-from include.tasks.extract.scraper import LANDING_DIR, AllAirlineReviewScraper
+from include.tasks.extract.scraper import CATEGORIES, ReviewScraper
 from include.tasks.load.s3_upload import upload_raw as _upload
 
 RAW_DATASET = Dataset("skytrax://raw")
+
+# Singular category keys: airline, seat, lounge, airport
+REVIEW_TYPES = list(CATEGORIES)
 
 default_args = {
     "owner": "airflow",
@@ -61,135 +62,74 @@ default_args = {
 )
 def crawl_dag():
 
-    @task()
-    def get_airline_urls() -> list[tuple[str, str]]:
-        scraper = AllAirlineReviewScraper()
-        return scraper.get_all_airline_urls()
+    @task(max_active_tis_per_dagrun=2)
+    def scrape_type(review_type: str) -> dict:
+        """Scrape one review type and write date-partitioned raw CSVs.
 
-    @task()
-    def scrape_letter(
-        letter: str,
-        airline_urls: list[tuple[str, str]],
-        **context,
-    ) -> str | None:
-        """Scrape all airlines whose name starts with `letter`.
-
-        Writes reviews to a staging CSV on disk and returns the file path
-        (instead of returning the data via XCom) to avoid OOM.
+        Returns {"review_type": <category>, "dates": [ISO date strings]}.
+        Entity-level parallelism is handled inside the scraper (max_workers).
         """
-        subset = [(name, url) for name, url in airline_urls if name.upper().startswith(letter)]
-        if not subset:
-            return None
-
-        full_scrape: bool = context["params"]["full_scrape"]
+        full_scrape: bool = get_current_context()["params"]["full_scrape"]
         yesterday = date.today() - timedelta(days=1)
         since_date = None if full_scrape else yesterday
 
         default_workers = "10" if full_scrape else "3"
         workers = int(Variable.get("SCRAPER_WORKERS", default_var=default_workers))
 
-        scraper = AllAirlineReviewScraper(
-            max_workers=workers,
+        scraper = ReviewScraper(
+            category=review_type,
             since_date=since_date,
+            max_workers=workers,
         )
 
-        all_reviews = []
-        for name, url in subset:
-            all_reviews.extend(scraper.scrape_airline_reviews(name, url))
+        try:
+            saved_paths = scraper.scrape_all_partitioned()
+        except RuntimeError as e:
+            # Incremental runs with no new reviews are normal — don't fail the DAG.
+            scrape_type.log.warning("No data for %s: %s", review_type, e)
+            return {"review_type": review_type, "dates": []}
 
-        if not all_reviews:
-            return None
+        dates = set()
+        for p in saved_paths:
+            ymd = p.stem.replace("raw_data_", "")  # YYYYMMDD
+            dates.add(date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:])).isoformat())
 
-        staging_dir = LANDING_DIR / "staging"
-        staging_dir.mkdir(parents=True, exist_ok=True)
-        staging_path = staging_dir / f"letter_{letter.lower()}.csv"
-        pd.DataFrame(all_reviews).to_csv(staging_path, index=False)
-        return str(staging_path)
+        return {"review_type": review_type, "dates": sorted(dates)}
 
     @task()
-    def split_and_save(staging_paths: list[str | None]) -> list[str]:
-        """
-        Read staging CSVs written by scrape_letter tasks, merge, and
-        write one CSV per review date.
-
-        Returns the list of ISO date strings that were written, e.g.:
-          ["2010-03-15", "2010-03-16", ..., "2026-03-12"]
-        These are passed to dag_process via an Airflow Variable.
-        """
-        valid_paths = [p for p in staging_paths if p]
-        if not valid_paths:
-            raise RuntimeError("No reviews scraped across all letters — aborting.")
-
-        df = pd.concat([pd.read_csv(p) for p in valid_paths], ignore_index=True)
-
-        # Clean up staging files
-        for p in valid_paths:
-            Path(p).unlink(missing_ok=True)
-
-        # Normalise the date column to YYYY-MM-DD so we can group by it.
-        # Raw dates come as "22nd March 2025" — strip ordinal suffixes first.
-        cleaned = df["date"].str.replace(r"(\d+)(st|nd|rd|th)", r"\1", regex=True)
-        df["date"] = pd.to_datetime(cleaned, format="%d %B %Y", errors="coerce").dt.strftime(
-            "%Y-%m-%d"
-        )
-        df = df.dropna(subset=["date"])
-
-        written_dates = []
-        for review_date_str, group in df.groupby("date"):
-            review_date = date.fromisoformat(review_date_str)
-            output_path = (
-                LANDING_DIR
-                / "raw"
-                / review_date.strftime("%Y")
-                / review_date.strftime("%m")
-                / f"raw_data_{review_date.strftime('%Y%m%d')}.csv"
-            )
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            group.to_csv(output_path, index=False)
-            written_dates.append(review_date_str)
-
-        written_dates.sort()
-        # Store for dag_process to pick up
-        Variable.set("LAST_CRAWL_DATES", json.dumps(written_dates))
-        return written_dates
+    def record_dates(results: list[dict]) -> dict[str, list[str]]:
+        """Collapse per-type results into {category: [ISO dates]} for downstream DAGs."""
+        mapping = {r["review_type"]: r["dates"] for r in results if r and r["dates"]}
+        if not mapping:
+            raise RuntimeError("No reviews scraped across any type — aborting.")
+        Variable.set("LAST_CRAWL_DATES", json.dumps(mapping))
+        return mapping
 
     @task(outlets=[RAW_DATASET])
-    def upload_raw(written_dates: list[str]) -> list[str]:
-        """Upload all date-partitioned raw CSVs to S3 (skipped when STORAGE_MODE=local)."""
+    def upload_raw(mapping: dict[str, list[str]]) -> list[str]:
+        """Upload every (type, date) raw CSV to S3 (skipped when STORAGE_MODE=local)."""
         if os.getenv("STORAGE_MODE", "local") == "local":
             return []
 
         bucket = os.environ["S3_BUCKET"]
         uris = []
-        for date_str in written_dates:
-            uri = _upload(
-                date.fromisoformat(date_str),
-                bucket=bucket,
-                use_airflow_hook=True,
-            )
-            if uri:
-                uris.append(uri)
+        for category, dates in mapping.items():
+            for date_str in dates:
+                uri = _upload(
+                    category,
+                    date.fromisoformat(date_str),
+                    bucket=bucket,
+                    use_airflow_hook=True,
+                )
+                if uri:
+                    uris.append(uri)
         return uris
-
-    @task_group(group_id="scrape_airlines")
-    def scrape_airlines(airline_urls):
-        return [
-            scrape_letter.override(
-                task_id=f"scrape_{letter.lower()}",
-                max_active_tis_per_dagrun=4,
-            )(
-                letter=letter,
-                airline_urls=airline_urls,
-            )
-            for letter in string.ascii_uppercase
-        ]
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 
-    airline_urls = get_airline_urls()
-    letter_results = scrape_airlines(airline_urls)
-    written_dates = split_and_save(letter_results)
-    upload_raw(written_dates)
+    results = scrape_type.expand(review_type=REVIEW_TYPES)
+    mapping = record_dates(results)
+    upload_raw(mapping)
 
 
 crawl_dag()
