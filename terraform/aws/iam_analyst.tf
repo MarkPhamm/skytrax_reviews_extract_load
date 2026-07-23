@@ -2,7 +2,10 @@
 # IAM Role — Analyst (read-only)
 #
 # Analysts assume this role to browse and download files from the landing
-# bucket via the AWS console or CLI.  Full read access on all prefixes.
+# bucket via the AWS console or CLI.
+#
+# Trust: var.analyst_trusted_arns when set; otherwise this account's root
+# (any principal in the account that is allowed to AssumeRole).
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "analyst_assume_role" {
@@ -11,7 +14,7 @@ data "aws_iam_policy_document" "analyst_assume_role" {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "AWS"
-      identifiers = length(var.analyst_trusted_arns) > 0 ? var.analyst_trusted_arns : ["arn:aws:iam::000000000000:root"]
+      identifiers = local.analyst_trust_arns
     }
   }
 }
@@ -24,16 +27,16 @@ resource "aws_iam_role" "analyst" {
 
 data "aws_iam_policy_document" "analyst_s3" {
   statement {
-    sid     = "ListBucket"
-    effect  = "Allow"
-    actions = ["s3:ListBucket", "s3:GetBucketLocation"]
+    sid       = "ListBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [aws_s3_bucket.landing.arn]
   }
 
   statement {
-    sid     = "ReadObjects"
-    effect  = "Allow"
-    actions = ["s3:GetObject", "s3:GetObjectVersion"]
+    sid       = "ReadObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:GetObjectVersion"]
     resources = ["${aws_s3_bucket.landing.arn}/*"]
   }
 }

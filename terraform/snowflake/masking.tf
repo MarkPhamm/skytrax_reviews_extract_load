@@ -7,11 +7,13 @@
 # via post-hooks after each rebuild, so masking survives `dbt run`.
 # ---------------------------------------------------------------------------
 
+# create the account role that allows sessions to see unmasked PII columns
 resource "snowflake_account_role" "pii_reader" {
   name    = "PII_READER"
   comment = "Sessions with this role see unmasked PII columns."
 }
 
+# create the masking policy that masks PII columns
 resource "snowflake_masking_policy" "pii_string" {
   name     = "MASK_PII_STRING"
   database = snowflake_database.skytrax.name

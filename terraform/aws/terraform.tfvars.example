@@ -7,3 +7,9 @@ environment = "dev"
 # After creating the Snowflake stage (Step 6), run DESC STAGE to get this ARN.
 # Leave empty on first apply — fill in after Snowflake setup, then re-apply.
 snowflake_iam_user_arn = ""
+
+# Optional: principals that may assume the analyst read-only role.
+# Leave empty to trust this account's root.
+# analyst_trusted_arns = [
+#   "arn:aws:iam::123456789012:user/analyst-alice",
+# ]

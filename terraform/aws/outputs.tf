@@ -13,6 +13,11 @@ output "snowflake_s3_role_arn" {
   value       = aws_iam_role.snowflake_s3.arn
 }
 
+output "analyst_role_arn" {
+  description = "ARN of the read-only analyst IAM role for the landing bucket"
+  value       = aws_iam_role.analyst.arn
+}
+
 output "airflow_access_key_id" {
   description = "Access key ID for the Airflow IAM user"
   value       = aws_iam_access_key.airflow.id
