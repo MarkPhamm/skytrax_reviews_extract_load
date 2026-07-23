@@ -43,6 +43,11 @@ def _crawl_mapping() -> dict[str, list[str]]:
     return json.loads(Variable.get("LAST_CRAWL_DATES", default_var="{}"))
 
 
+def _quality_rejected(category: str) -> list[str]:
+    """Dates dag_process flagged as quality-rejected for this category — never loaded."""
+    return json.loads(Variable.get(f"QUALITY_REJECTED__{category}", default_var="[]"))
+
+
 @dag(
     dag_id="skytrax_snowflake",
     schedule=[PROCESSED_DATASET],
@@ -56,12 +61,14 @@ def snowflake_dag():
 
     @task()
     def get_work_items() -> list[dict]:
-        """[{category, date_str}, ...] for categories under BULK_THRESHOLD dates."""
+        """[{category, date_str}, ...] for categories under BULK_THRESHOLD dates,
+        excluding any date dag_process flagged as quality-rejected."""
         return [
             {"category": category, "date_str": d}
             for category, dates in _crawl_mapping().items()
             if len(dates) <= BULK_THRESHOLD
             for d in dates
+            if d not in _quality_rejected(category)
         ]
 
     @task()
@@ -83,8 +90,11 @@ def snowflake_dag():
 
     @task()
     def load_bulk(category: str) -> dict:
-        """One COPY INTO covering every processed file for a category."""
-        return copy_into_bulk(category)
+        """One COPY INTO covering every processed file for a category, excluding
+        any date dag_process flagged as quality-rejected."""
+        rejected = set(_quality_rejected(category))
+        all_dates = _crawl_mapping().get(category, [])
+        return copy_into_bulk(category, all_dates=all_dates, exclude_dates=rejected)
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 

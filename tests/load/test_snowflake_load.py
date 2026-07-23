@@ -164,3 +164,42 @@ def test_copy_into_bulk_rejected_rows_raise():
     with patch.object(mod, "_get_hook", return_value=hook):
         with pytest.raises(RuntimeError, match="2 rejected row"):
             mod.copy_into_bulk("seat")
+
+
+# ---------------------------------------------------------------------------
+# copy_into_bulk — exclude_dates: quality-rejected dates are never loaded
+# ---------------------------------------------------------------------------
+
+
+def test_copy_into_bulk_with_exclusions_lists_only_good_files():
+    hook = MagicMock()
+    hook.get_records.return_value = [
+        ("processed/seats/2026/03/clean_data_20260310.csv", "LOADED", 5, 5, 1, 0, None),
+    ]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        totals = mod.copy_into_bulk(
+            "seat",
+            all_dates=["2026-03-10", "2026-03-11", "2026-03-12"],
+            exclude_dates={"2026-03-11", "2026-03-12"},
+        )
+
+    sql = hook.get_records.call_args.args[0]
+    assert "FILES = (" in sql
+    assert "processed/seats/2026/03/clean_data_20260310.csv" in sql
+    assert "clean_data_20260311.csv" not in sql
+    assert "clean_data_20260312.csv" not in sql
+    assert totals["rows_loaded"] == 5
+
+
+def test_copy_into_bulk_all_dates_excluded_skips_copy():
+    hook = MagicMock()
+    with patch.object(mod, "_get_hook", return_value=hook):
+        totals = mod.copy_into_bulk(
+            "seat",
+            all_dates=["2026-03-10"],
+            exclude_dates={"2026-03-10"},
+        )
+
+    hook.get_records.assert_not_called()
+    assert totals["files_loaded"] == 0
+    assert totals["rows_loaded"] == 0

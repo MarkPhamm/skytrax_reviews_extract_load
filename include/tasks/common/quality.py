@@ -1,13 +1,14 @@
 """
 Data quality gates for the EL pipeline.
 
-Pre-load  — ``validate_processed_csv``: run against a processed CSV *before*
-            it is uploaded to S3 / loaded into Snowflake. Fails the Airflow
-            task on schema drift, empty files, null-rate breaches, or
-            out-of-range star ratings.
-Post-load — consumed by ``include.tasks.load.snowflake_load.copy_into``:
-            reconciles Snowflake COPY INTO results (rows_parsed vs rows_loaded,
-            errors_seen) and records every load in RAW.LOAD_AUDIT.
+Post-upload — ``validate_processed_csv``: run against a processed CSV *after*
+              it is uploaded to S3, so a rejected file is still available in
+              S3/Snowflake rather than blocking the pipeline on it. Flags
+              schema drift, empty files, null-rate breaches, or out-of-range
+              star ratings by raising ``DataQualityError``.
+Post-load   — consumed by ``include.tasks.load.snowflake_load.copy_into``:
+              reconciles Snowflake COPY INTO results (rows_parsed vs
+              rows_loaded, errors_seen) and records every load in RAW.LOAD_AUDIT.
 
 Expected schemas are derived from the cleaning configs
 (``transform.config.COLUMN_ORDER`` and ``transform.processing.CLEANING_PROFILES``)

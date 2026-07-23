@@ -182,18 +182,54 @@ def _parse_review_date(s3_key: str) -> date | None:
 # ---------------------------------------------------------------------------
 
 
-def copy_into_bulk(category: str, conn_id: str = "snowflake_default") -> dict:
-    """Bulk-load every processed file for a category in a single COPY INTO.
+def copy_into_bulk(
+    category: str,
+    conn_id: str = "snowflake_default",
+    all_dates: list[str] | None = None,
+    exclude_dates: set[str] | None = None,
+) -> dict:
+    """Bulk-load processed files for a category in a single COPY INTO.
 
     For a backfill spanning thousands of (type, date) files, issuing one
     COPY INTO per file means one Snowflake round trip each — this instead
     points COPY INTO at the whole `processed/<type>/` prefix, so Snowflake
     loads (and dedupes) every file in one statement. Safe to call even when
     most files are already loaded — those come back with status SKIPPED.
+
+    ``exclude_dates`` (e.g. dates that failed the post-load quality check)
+    are never loaded: pass ``all_dates`` (every date this run queued for the
+    category) alongside it, and the COPY INTO explicitly lists only the
+    remaining good files instead of scanning the whole prefix.
     """
     table = table_name(category)
     prefix = f"processed/{paths.partition(category)}/"
-    sql = _read_sql("copy_into.sql").replace("{{ table }}", table).replace("{{ s3_key }}", prefix)
+
+    if exclude_dates:
+        good_dates = [d for d in (all_dates or []) if d not in exclude_dates]
+        if not good_dates:
+            logger.info("Bulk COPY INTO %s: all queued dates excluded, nothing to load", table)
+            return {
+                "rows_parsed": 0,
+                "rows_loaded": 0,
+                "errors_seen": 0,
+                "files_loaded": 0,
+                "files_skipped": 0,
+            }
+
+        files_clause = ", ".join(
+            f"'{paths.processed_key(category, date.fromisoformat(d))}'" for d in good_dates
+        )
+        sql = (
+            f"COPY INTO {table}\n"
+            "FROM @SKYTRAX_REVIEWS_DB.RAW.SKYTRAX_S3_STAGE/\n"
+            f"FILES = ({files_clause})\n"
+            "ON_ERROR = 'CONTINUE'\n"
+            "PURGE    = FALSE;"
+        )
+    else:
+        sql = (
+            _read_sql("copy_into.sql").replace("{{ table }}", table).replace("{{ s3_key }}", prefix)
+        )
 
     hook = _get_hook(conn_id)
     results = hook.get_records(sql)
