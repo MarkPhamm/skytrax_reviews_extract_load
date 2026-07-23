@@ -4,18 +4,19 @@ DAG: skytrax_process
 Triggered automatically when dag_crawl emits RAW_DATASET.
 
 Reads the {category: [dates]} map written by dag_crawl (LAST_CRAWL_DATES Airflow
-Variable). Every (review type, review date) is downloaded, cleaned, and uploaded
-to S3 unconditionally — processing never blocks or fails on a data quality issue.
-A separate post-load quality check then validates each uploaded file; a date that
-fails the check is recorded (QUALITY_REJECTED__<category> Airflow Variable) so
-skytrax_snowflake can skip loading it, without ever refusing to process/upload it
-in the first place.
+Variable) and processes one category per mapped task instance. Each category task
+downloads, cleans, and uploads every one of its (type, date) files to S3 in a
+thread pool — unconditionally, so processing never blocks or fails on a data
+quality issue.
 
-Small batches (a category with <= BULK_THRESHOLD queued dates — the normal daily
-case) use one Airflow-mapped-task-instance per (type, date), for per-file retry
-isolation. Larger batches (a full backfill) instead run in a single bulk task per
-category, processing with a thread pool — Airflow's dynamic task mapping has a
-hard max_map_length ceiling (default 1024) that a full backfill blows past.
+A post-upload quality check then validates each file; a date that fails is
+recorded (QUALITY_REJECTED__<category> Airflow Variable) so skytrax_snowflake can
+skip loading it, without ever refusing to process/upload it. Only a genuine
+processing error (download/clean/upload) fails a category task.
+
+One task per category (not per file) keeps the mapping small and constant — four
+categories, never thousands — so it works identically for a single daily date or
+a full multi-year backfill, without tripping Airflow's max_map_length ceiling.
 """
 
 from __future__ import annotations
@@ -44,10 +45,6 @@ logger = logging.getLogger(__name__)
 RAW_DATASET = Dataset("skytrax://raw")
 PROCESSED_DATASET = Dataset("skytrax://processed")
 
-# Above this many queued dates for a category, process it with one bulk task
-# (thread-pool loop) instead of one Airflow-mapped-task-instance per file.
-BULK_THRESHOLD = 20
-
 default_args = {
     "owner": "airflow",
     "retries": 1,
@@ -64,23 +61,17 @@ def _crawl_mapping() -> dict[str, list[str]]:
     return json.loads(Variable.get("LAST_CRAWL_DATES", default_var="{}"))
 
 
-def _quality_rejected_key(category: str) -> str:
-    return f"QUALITY_REJECTED__{category}"
-
-
 def _set_quality_rejected(category: str, dates: list[str]) -> None:
-    """Record which dates failed the post-load quality check for a category.
+    """Record which dates failed the post-upload quality check for a category.
 
     One Variable per category — each category is only ever written by its own
-    task instance (process_bulk, or the record_quality aggregator for small
-    batches), so concurrent categories never race on the same key.
+    mapped task instance, so concurrent categories never race on the same key.
     """
-    Variable.set(_quality_rejected_key(category), json.dumps(sorted(set(dates))))
+    Variable.set(f"QUALITY_REJECTED__{category}", json.dumps(sorted(set(dates))))
 
 
 # ---------------------------------------------------------------------------
-# Shared per-(type, date) steps — called directly by the small-batch tasks
-# below, and looped over (with a thread pool) by process_bulk for large batches
+# Per-(type, date) steps — looped over (with a thread pool) by process_category
 # ---------------------------------------------------------------------------
 
 
@@ -136,10 +127,10 @@ def _upload_one(category: str, date_str: str, processed_path: Path, client=None)
 
 
 def _process_one(category: str, date_str: str, client=None) -> dict:
-    """Download → clean → upload → post-load quality check, for one (category, date).
+    """Download → clean → upload → post-upload quality check, for one (category, date).
 
     Download/clean/upload always run and are never skipped or blocked by a
-    quality issue. Only the post-load check's outcome is conditional: a
+    quality issue. Only the quality check's outcome is conditional: a
     DataQualityError is caught and recorded as quality_passed=False rather
     than raised — the file is still processed and uploaded either way. Any
     other exception (download/clean/upload failure) still propagates and
@@ -177,74 +168,19 @@ def _process_one(category: str, date_str: str, client=None) -> dict:
 def process_dag():
 
     @task()
-    def get_work_items() -> list[dict]:
-        """[{category, date_str}, ...] for categories under BULK_THRESHOLD dates."""
-        return [
-            {"category": category, "date_str": d}
-            for category, dates in _crawl_mapping().items()
-            if len(dates) <= BULK_THRESHOLD
-            for d in dates
-        ]
-
-    @task()
-    def get_bulk_categories() -> list[str]:
-        """Categories with more than BULK_THRESHOLD queued dates (backfill-sized)."""
-        return [
-            category for category, dates in _crawl_mapping().items() if len(dates) > BULK_THRESHOLD
-        ]
-
-    @task()
-    def download_raw(category: str, date_str: str) -> dict:
-        raw_path = _download_one(category, date_str)
-        return {"category": category, "date_str": date_str, "raw_path": str(raw_path)}
-
-    @task()
-    def clean_one(category: str, date_str: str, raw_path: str) -> dict:
-        processed_path = _clean_one(category, date_str, Path(raw_path))
-        return {"category": category, "date_str": date_str, "processed_path": str(processed_path)}
+    def get_categories() -> list[str]:
+        """Categories that have queued dates this run (one mapped task each)."""
+        return [category for category, dates in _crawl_mapping().items() if dates]
 
     @task(outlets=[PROCESSED_DATASET])
-    def upload_processed(category: str, date_str: str, processed_path: str) -> dict:
-        """Upload one processed CSV to S3, then run the post-load quality check.
-
-        Always uploads (skipped only when STORAGE_MODE=local) — a quality
-        failure is recorded, not raised, so it never blocks the upload.
-        """
-        path = Path(processed_path)
-        uri = _upload_one(category, date_str, path)
-        try:
-            validate_processed_csv(category, path)
-            quality_passed = True
-        except DataQualityError as e:
-            quality_passed = False
-            logger.warning("Quality check failed for %s %s: %s", category, date_str, e)
-        return {
-            "category": category,
-            "date_str": date_str,
-            "uri": uri,
-            "quality_passed": quality_passed,
-        }
-
-    @task()
-    def record_quality(results: list[dict]) -> dict[str, list[str]]:
-        """Aggregate per-file quality results into one QUALITY_REJECTED__<category>
-        Variable per category — a single task, so no concurrent-write races."""
-        rejected: dict[str, list[str]] = {}
-        for r in results:
-            if r and not r["quality_passed"]:
-                rejected.setdefault(r["category"], []).append(r["date_str"])
-        for category, dates in rejected.items():
-            _set_quality_rejected(category, dates)
-        return rejected
-
-    @task(outlets=[PROCESSED_DATASET])
-    def process_bulk(category: str) -> dict:
+    def process_category(category: str) -> dict:
         """Download→clean→upload→validate every queued date for one category.
 
-        Runs in a thread pool within a single Airflow task, so a backfill-sized
-        batch never needs to create thousands of mapped task instances. A
-        quality-check failure is recorded (not raised) — only a genuine
-        processing error (download/clean/upload) fails this task.
+        Runs in a thread pool within a single Airflow task, so the mapping stays
+        at one instance per category regardless of how many dates each holds — a
+        single daily date and a multi-year backfill use the exact same path. A
+        quality-check failure is recorded (not raised); only a genuine processing
+        error (download/clean/upload) fails this task.
         """
         dates = _crawl_mapping().get(category, [])
         client = get_s3_client(use_airflow_hook=True)
@@ -265,7 +201,7 @@ def process_dag():
         _set_quality_rejected(category, rejected_dates)
 
         logger.info(
-            "Bulk process %s: %d processed (%d quality-rejected), %d failed (of %d)",
+            "Process %s: %d processed (%d quality-rejected), %d failed (of %d)",
             category,
             len(succeeded),
             len(rejected_dates),
@@ -274,7 +210,7 @@ def process_dag():
         )
         if failed:
             raise RuntimeError(
-                f"Bulk processing failed for {len(failed)}/{len(dates)} date(s) in "
+                f"Processing failed for {len(failed)}/{len(dates)} date(s) in "
                 f"{category}: {failed[:5]}{' ...' if len(failed) > 5 else ''}"
             )
         return {
@@ -285,13 +221,7 @@ def process_dag():
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 
-    work_items = get_work_items()
-    raw = download_raw.expand_kwargs(work_items)
-    cleaned = clean_one.expand_kwargs(raw)
-    uploaded = upload_processed.expand_kwargs(cleaned)
-    record_quality(uploaded)
-
-    process_bulk.expand(category=get_bulk_categories())
+    process_category.expand(category=get_categories())
 
 
 process_dag()

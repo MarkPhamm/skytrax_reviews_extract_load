@@ -6,7 +6,7 @@ Post-upload — ``validate_processed_csv``: run against a processed CSV *after*
               S3/Snowflake rather than blocking the pipeline on it. Flags
               schema drift, empty files, null-rate breaches, or out-of-range
               star ratings by raising ``DataQualityError``.
-Post-load   — consumed by ``include.tasks.load.snowflake_load.copy_into``:
+Post-load   — consumed by ``include.tasks.load.snowflake_load.copy_into_bulk``:
               reconciles Snowflake COPY INTO results (rows_parsed vs
               rows_loaded, errors_seen) and records every load in RAW.LOAD_AUDIT.
 
