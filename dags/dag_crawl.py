@@ -18,6 +18,7 @@ Params:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import date, datetime, timedelta
 
@@ -28,6 +29,8 @@ from airflow.operators.python import get_current_context
 
 from include.tasks.extract.scraper import CATEGORIES, ReviewScraper
 from include.tasks.load.s3_upload import upload_raw as _upload
+
+logger = logging.getLogger(__name__)
 
 RAW_DATASET = Dataset("skytrax://raw")
 
@@ -69,9 +72,13 @@ def crawl_dag():
         Returns {"review_type": <category>, "dates": [ISO date strings]}.
         Entity-level parallelism is handled inside the scraper (max_workers).
         """
-        full_scrape: bool = get_current_context()["params"]["full_scrape"]
-        yesterday = date.today() - timedelta(days=1)
-        since_date = None if full_scrape else yesterday
+        context = get_current_context()
+        full_scrape: bool = context["params"]["full_scrape"]
+        # Derived from this run's logical_date (not wall-clock date.today()) so
+        # clearing/rerunning a past run recomputes the correct target day instead
+        # of silently re-scraping "yesterday relative to right now".
+        run_day = context["logical_date"].date()
+        since_date = None if full_scrape else run_day - timedelta(days=1)
 
         default_workers = "10" if full_scrape else "3"
         workers = int(Variable.get("SCRAPER_WORKERS", default_var=default_workers))
@@ -86,7 +93,7 @@ def crawl_dag():
             saved_paths = scraper.scrape_all_partitioned()
         except RuntimeError as e:
             # Incremental runs with no new reviews are normal — don't fail the DAG.
-            scrape_type.log.warning("No data for %s: %s", review_type, e)
+            logger.warning("No data for %s: %s", review_type, e)
             return {"review_type": review_type, "dates": []}
 
         dates = set()

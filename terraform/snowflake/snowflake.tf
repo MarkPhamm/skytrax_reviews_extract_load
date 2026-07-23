@@ -419,6 +419,61 @@ resource "snowflake_table" "airport_reviews" {
 }
 
 # ---------------------------------------------------------------------------
+# Load audit table  (written by include/tasks/load/snowflake_load.copy_into
+# after every COPY INTO — reconciliation record, not raw review data)
+# ---------------------------------------------------------------------------
+
+resource "snowflake_table" "load_audit" {
+  database = snowflake_database.skytrax.name
+  schema   = snowflake_schema.raw.name
+  name     = "LOAD_AUDIT"
+
+  column {
+    name = "LOAD_TS"
+    type = "TIMESTAMP_NTZ"
+    default {
+      expression = "CURRENT_TIMESTAMP()"
+    }
+  }
+  column {
+    name = "CATEGORY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "REVIEW_DATE"
+    type = "DATE"
+  }
+  column {
+    name = "S3_KEY"
+    type = "VARCHAR"
+  }
+  column {
+    name = "TARGET_TABLE"
+    type = "VARCHAR"
+  }
+  column {
+    name = "STATUS"
+    type = "VARCHAR"
+  }
+  column {
+    name = "ROWS_PARSED"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "ROWS_LOADED"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "ERRORS_SEEN"
+    type = "NUMBER(38,0)"
+  }
+  column {
+    name = "FIRST_ERROR"
+    type = "VARCHAR"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # S3 External Stage
 # ---------------------------------------------------------------------------
 

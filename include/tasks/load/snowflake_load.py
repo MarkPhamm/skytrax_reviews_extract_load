@@ -148,8 +148,7 @@ def _summarize_copy_result(results: list) -> dict:
 def _record_load_audit(
     hook, category: str, review_date: date, s3_key: str, table: str, summary: dict
 ) -> None:
-    """Persist one load outcome to RAW.LOAD_AUDIT (created if missing)."""
-    hook.run(_read_sql("create_table_load_audit.sql"))
+    """Persist one load outcome to RAW.LOAD_AUDIT (table is Terraform-managed)."""
     hook.run(
         _read_sql("insert_load_audit.sql"),
         parameters={
