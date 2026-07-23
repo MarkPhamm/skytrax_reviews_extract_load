@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 
 from airflow.datasets import Dataset
@@ -28,6 +29,7 @@ from airflow.models import Param, Variable
 from airflow.operators.python import get_current_context
 
 from include.tasks.extract.scraper import CATEGORIES, ReviewScraper
+from include.tasks.load.s3_upload import get_s3_client
 from include.tasks.load.s3_upload import upload_raw as _upload
 
 logger = logging.getLogger(__name__)
@@ -39,8 +41,8 @@ REVIEW_TYPES = list(CATEGORIES)
 
 default_args = {
     "owner": "airflow",
-    "retries": 2,
-    "retry_delay": timedelta(seconds=0),
+    "retries": 1,
+    "retry_delay": timedelta(seconds=10),
 }
 
 
@@ -114,20 +116,34 @@ def crawl_dag():
 
     @task(outlets=[RAW_DATASET])
     def upload_raw(mapping: dict[str, list[str]]) -> list[str]:
-        """Upload every (type, date) raw CSV to S3 (skipped when STORAGE_MODE=local)."""
+        """Upload every (type, date) raw CSV to S3 (skipped when STORAGE_MODE=local).
+
+        A full backfill can mean tens of thousands of (type, date) files, so
+        this builds one S3 client and uploads with a thread pool instead of
+        opening a fresh connection per file in a sequential loop.
+        """
         if os.getenv("STORAGE_MODE", "local") == "local":
             return []
 
         bucket = os.environ["S3_BUCKET"]
+        client = get_s3_client(use_airflow_hook=True)
+        items = [(category, d) for category, dates in mapping.items() for d in dates]
+
+        workers = int(Variable.get("UPLOAD_WORKERS", default_var="10"))
         uris = []
-        for category, dates in mapping.items():
-            for date_str in dates:
-                uri = _upload(
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(
+                    _upload,
                     category,
                     date.fromisoformat(date_str),
                     bucket=bucket,
-                    use_airflow_hook=True,
+                    client=client,
                 )
+                for category, date_str in items
+            ]
+            for future in as_completed(futures):
+                uri = future.result()
                 if uri:
                     uris.append(uri)
         return uris

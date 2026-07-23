@@ -61,13 +61,17 @@ def processed_s3_key(category: str, run_date: date) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _get_s3_client(use_airflow_hook: bool = False):
+def get_s3_client(use_airflow_hook: bool = False):
     """
-    Return a boto3 S3 client.
+    Build one boto3 S3 client.
 
     When use_airflow_hook=True and running inside Airflow, credentials are
-    pulled from the Airflow connection (AWS_CONN_ID).  Otherwise fall back to
+    pulled from the Airflow connection (AWS_CONN_ID). Otherwise fall back to
     boto3's default credential chain.
+
+    Callers uploading many files (a full backfill can mean thousands) should
+    build this once and pass it via the ``client`` param below, rather than
+    creating a fresh connection per file.
     """
     if use_airflow_hook:
         try:
@@ -88,9 +92,13 @@ def upload_file(
     s3_key: str,
     bucket: str,
     use_airflow_hook: bool = False,
+    client=None,
 ) -> str:
     """
     Upload a single file to S3.
+
+    Pass ``client`` (from ``get_s3_client()``) to reuse one connection across
+    many calls instead of building a new one per file.
 
     Returns the s3:// URI of the uploaded object.
     Raises FileNotFoundError if local_path does not exist.
@@ -98,7 +106,7 @@ def upload_file(
     if not local_path.exists():
         raise FileNotFoundError(f"File not found: {local_path}")
 
-    client = _get_s3_client(use_airflow_hook=use_airflow_hook)
+    client = client or get_s3_client(use_airflow_hook=use_airflow_hook)
     client.upload_file(str(local_path), bucket, s3_key)
     uri = f"s3://{bucket}/{s3_key}"
     logger.info("Uploaded %s → %s", local_path.name, uri)
@@ -115,6 +123,7 @@ def upload_raw(
     run_date: date,
     bucket: Optional[str] = None,
     use_airflow_hook: bool = False,
+    client=None,
 ) -> Optional[str]:
     """
     Upload the raw CSV for (category, run_date) to S3.
@@ -134,6 +143,7 @@ def upload_raw(
         s3_key=raw_s3_key(category, run_date),
         bucket=bucket,
         use_airflow_hook=use_airflow_hook,
+        client=client,
     )
 
 
@@ -142,6 +152,7 @@ def upload_processed(
     run_date: date,
     bucket: Optional[str] = None,
     use_airflow_hook: bool = False,
+    client=None,
 ) -> Optional[str]:
     """
     Upload the processed CSV for (category, run_date) to S3.
@@ -161,6 +172,7 @@ def upload_processed(
         s3_key=processed_s3_key(category, run_date),
         bucket=bucket,
         use_airflow_hook=use_airflow_hook,
+        client=client,
     )
 
 

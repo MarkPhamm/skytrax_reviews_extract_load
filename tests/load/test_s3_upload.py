@@ -142,3 +142,43 @@ def test_upload_raw_raises_without_bucket(monkeypatch):
     monkeypatch.setattr(mod, "S3_BUCKET", "")
     with pytest.raises(ValueError, match="S3_BUCKET"):
         mod.upload_raw("airline", date(2026, 3, 12))
+
+
+# ---------------------------------------------------------------------------
+# client reuse — a caller-supplied client is used instead of building a new one
+# ---------------------------------------------------------------------------
+
+
+def test_upload_file_reuses_supplied_client(tmp_path):
+    csv = tmp_path / "raw_data_20260312.csv"
+    csv.write_text("col\nval")
+    mock_client = MagicMock()
+
+    with patch("boto3.client") as mock_boto3_client:
+        uri = mod.upload_file(
+            local_path=csv,
+            s3_key="raw/airlines/2026/03/raw_data_20260312.csv",
+            bucket="my-bucket",
+            client=mock_client,
+        )
+
+    mock_boto3_client.assert_not_called()
+    mock_client.upload_file.assert_called_once()
+    assert uri == "s3://my-bucket/raw/airlines/2026/03/raw_data_20260312.csv"
+
+
+def test_upload_raw_passes_through_supplied_client(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, "STORAGE_MODE", "s3")
+    monkeypatch.setattr(paths_mod, "LANDING_DIR", tmp_path)
+
+    run_date = date(2026, 3, 12)
+    local = mod.raw_local_path("airline", run_date)
+    local.parent.mkdir(parents=True)
+    local.write_text("col\nval")
+
+    mock_client = MagicMock()
+    with patch("boto3.client") as mock_boto3_client:
+        mod.upload_raw("airline", run_date, bucket="my-bucket", client=mock_client)
+
+    mock_boto3_client.assert_not_called()
+    mock_client.upload_file.assert_called_once()
