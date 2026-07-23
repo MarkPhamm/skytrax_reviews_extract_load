@@ -13,10 +13,13 @@ STORAGE_MODE=local skips the Snowflake load entirely (no Snowflake needed for lo
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from pathlib import Path
 
 from include.tasks.common import paths
+
+_DATE_IN_KEY_RE = re.compile(r"clean_data_(\d{4})(\d{2})(\d{2})\.csv")
 
 logger = logging.getLogger(__name__)
 
@@ -146,14 +149,14 @@ def _summarize_copy_result(results: list) -> dict:
 
 
 def _record_load_audit(
-    hook, category: str, review_date: date, s3_key: str, table: str, summary: dict
+    hook, category: str, review_date: date | None, s3_key: str, table: str, summary: dict
 ) -> None:
     """Persist one load outcome to RAW.LOAD_AUDIT (table is Terraform-managed)."""
     hook.run(
         _read_sql("insert_load_audit.sql"),
         parameters={
             "category": category,
-            "review_date": review_date.isoformat(),
+            "review_date": review_date.isoformat() if review_date else None,
             "s3_key": s3_key,
             "target_table": table,
             "status": summary["status"],
@@ -163,3 +166,68 @@ def _record_load_audit(
             "first_error": summary["first_error"],
         },
     )
+
+
+def _parse_review_date(s3_key: str) -> date | None:
+    """Best-effort extraction of the review date from a processed-file S3 key."""
+    m = _DATE_IN_KEY_RE.search(s3_key)
+    if not m:
+        return None
+    year, month, day = (int(g) for g in m.groups())
+    return date(year, month, day)
+
+
+# ---------------------------------------------------------------------------
+# Bulk load — one COPY INTO per category covering every processed file
+# ---------------------------------------------------------------------------
+
+
+def copy_into_bulk(category: str, conn_id: str = "snowflake_default") -> dict:
+    """Bulk-load every processed file for a category in a single COPY INTO.
+
+    For a backfill spanning thousands of (type, date) files, issuing one
+    COPY INTO per file means one Snowflake round trip each — this instead
+    points COPY INTO at the whole `processed/<type>/` prefix, so Snowflake
+    loads (and dedupes) every file in one statement. Safe to call even when
+    most files are already loaded — those come back with status SKIPPED.
+    """
+    table = table_name(category)
+    prefix = f"processed/{paths.partition(category)}/"
+    sql = _read_sql("copy_into.sql").replace("{{ table }}", table).replace("{{ s3_key }}", prefix)
+
+    hook = _get_hook(conn_id)
+    results = hook.get_records(sql)
+    logger.info("Bulk COPY INTO %s ← %s: %d file(s) in result", table, prefix, len(results))
+
+    totals = {
+        "rows_parsed": 0,
+        "rows_loaded": 0,
+        "errors_seen": 0,
+        "files_loaded": 0,
+        "files_skipped": 0,
+    }
+    first_error = None
+    for row in results:
+        summary = _summarize_copy_result([row])
+        s3_key = str(row[0]) if row else prefix
+        _record_load_audit(hook, category, _parse_review_date(s3_key), s3_key, table, summary)
+
+        if summary["status"] == "SKIPPED":
+            totals["files_skipped"] += 1
+            continue
+        totals["files_loaded"] += 1
+        totals["rows_parsed"] += summary["rows_parsed"]
+        totals["rows_loaded"] += summary["rows_loaded"]
+        totals["errors_seen"] += summary["errors_seen"]
+        if summary["errors_seen"] and first_error is None:
+            first_error = summary["first_error"]
+
+    logger.info("Bulk COPY INTO %s totals: %s", table, totals)
+
+    if totals["errors_seen"]:
+        raise RuntimeError(
+            f"Bulk post-load check failed for {prefix} → {table}: "
+            f"{totals['errors_seen']} rejected row(s) across "
+            f"{totals['files_loaded']} file(s), first error: {first_error}"
+        )
+    return totals

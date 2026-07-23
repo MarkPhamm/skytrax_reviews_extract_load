@@ -4,7 +4,10 @@ DAG: skytrax_snowflake
 Triggered automatically when dag_process emits PROCESSED_DATASET.
 
 Infrastructure (database, schema, per-type tables, stage) is managed by Terraform.
-This DAG only runs COPY INTO for each (review type, review date) into its table.
+This DAG runs COPY INTO into each category's table — per (type, date) for the
+normal small daily batch, or one bulk COPY INTO per category (covering the whole
+processed/<type>/ prefix) once a category's batch crosses BULK_THRESHOLD, which
+is what a full backfill produces. Bulk avoids one Snowflake round trip per file.
 
 STORAGE_MODE=local skips this DAG entirely — no Snowflake needed for local dev.
 """
@@ -19,15 +22,25 @@ from airflow.datasets import Dataset
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
-from include.tasks.load.snowflake_load import copy_into
+from include.tasks.load.snowflake_load import copy_into, copy_into_bulk
 
 PROCESSED_DATASET = Dataset("skytrax://processed")
 
+# Above this many queued dates for a category, load it with one bulk COPY INTO
+# over the whole prefix instead of one COPY INTO per date.
+BULK_THRESHOLD = 20
+
 default_args = {
     "owner": "airflow",
-    "retries": 2,
-    "retry_delay": timedelta(seconds=0),
+    "retries": 1,
+    "retry_delay": timedelta(seconds=10),
 }
+
+
+def _crawl_mapping() -> dict[str, list[str]]:
+    if os.getenv("STORAGE_MODE", "local") == "local":
+        return {}
+    return json.loads(Variable.get("LAST_CRAWL_DATES", default_var="{}"))
 
 
 @dag(
@@ -43,15 +56,19 @@ def snowflake_dag():
 
     @task()
     def get_work_items() -> list[dict]:
-        """Expand {category: [dates]} into [{category, date_str}, ...]. Empty when local."""
-        if os.getenv("STORAGE_MODE", "local") == "local":
-            return []
-
-        mapping = json.loads(Variable.get("LAST_CRAWL_DATES", default_var="{}"))
+        """[{category, date_str}, ...] for categories under BULK_THRESHOLD dates."""
         return [
             {"category": category, "date_str": d}
-            for category, dates in mapping.items()
+            for category, dates in _crawl_mapping().items()
+            if len(dates) <= BULK_THRESHOLD
             for d in dates
+        ]
+
+    @task()
+    def get_bulk_categories() -> list[str]:
+        """Categories with more than BULK_THRESHOLD queued dates (backfill-sized)."""
+        return [
+            category for category, dates in _crawl_mapping().items() if len(dates) > BULK_THRESHOLD
         ]
 
     @task()
@@ -64,9 +81,15 @@ def snowflake_dag():
         """
         return copy_into(category, date.fromisoformat(date_str))
 
+    @task()
+    def load_bulk(category: str) -> dict:
+        """One COPY INTO covering every processed file for a category."""
+        return copy_into_bulk(category)
+
     # ── Wire up ──────────────────────────────────────────────────────────────
 
     load_one.expand_kwargs(get_work_items())
+    load_bulk.expand(category=get_bulk_categories())
 
 
 snowflake_dag()

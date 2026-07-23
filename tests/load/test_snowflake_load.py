@@ -101,3 +101,66 @@ def test_ensure_table_reads_per_type_ddl():
     # DDL split on ';' → at least the CREATE TABLE statement runs.
     ran = " ".join(call.args[0] for call in hook.run.call_args_list)
     assert "LOUNGE_REVIEWS" in ran
+
+
+# ---------------------------------------------------------------------------
+# copy_into_bulk — one COPY INTO over the whole processed/<type>/ prefix
+# ---------------------------------------------------------------------------
+
+
+def test_copy_into_bulk_targets_whole_prefix():
+    hook = MagicMock()
+    hook.get_records.return_value = [
+        ("processed/seats/2020/01/clean_data_20200101.csv", "LOADED", 10, 10, 1, 0, None),
+        ("processed/seats/2020/01/clean_data_20200102.csv", "LOADED", 5, 5, 1, 0, None),
+    ]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        totals = mod.copy_into_bulk("seat")
+
+    sql = hook.get_records.call_args.args[0]
+    assert "SKYTRAX_REVIEWS_DB.RAW.SEAT_REVIEWS" in sql
+    assert "processed/seats/" in sql
+    assert totals["rows_loaded"] == 15
+    assert totals["files_loaded"] == 2
+    assert totals["files_skipped"] == 0
+
+
+def test_copy_into_bulk_records_audit_row_per_file_with_parsed_date():
+    hook = MagicMock()
+    hook.get_records.return_value = [
+        ("processed/seats/2020/01/clean_data_20200101.csv", "LOADED", 10, 10, 1, 0, None),
+    ]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        mod.copy_into_bulk("seat")
+
+    insert_call = hook.run.call_args_list[-1]
+    assert insert_call.kwargs["parameters"]["review_date"] == "2020-01-01"
+    assert insert_call.kwargs["parameters"]["category"] == "seat"
+
+
+def test_copy_into_bulk_all_already_loaded_is_noop():
+    hook = MagicMock()
+    hook.get_records.return_value = [("Copy executed with 0 files processed.",)]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        totals = mod.copy_into_bulk("seat")
+
+    assert totals["files_skipped"] == 1
+    assert totals["files_loaded"] == 0
+
+
+def test_copy_into_bulk_rejected_rows_raise():
+    hook = MagicMock()
+    hook.get_records.return_value = [
+        (
+            "processed/seats/2020/01/clean_data_20200101.csv",
+            "PARTIALLY_LOADED",
+            10,
+            8,
+            1,
+            2,
+            "bad row",
+        ),
+    ]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        with pytest.raises(RuntimeError, match="2 rejected row"):
+            mod.copy_into_bulk("seat")
