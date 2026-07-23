@@ -4,10 +4,13 @@
 
 At Insurify, I work with Airflow, Terraform, and AWS every day. Two years ago, I signed up for an AWS account and accidentally racked up a $21,000 bill just from spinning up Amazon QuickSight — thankfully the Billing team sorted it out. That experience taught me how easy it is to get burned by cloud services if you don't understand what you're provisioning.
 
-This project is my attempt to break down the tools I use at work into something anyone can follow. It's an EL pipeline that scrapes 160,000+ airline reviews from [AirlineQuality.com](https://www.airlinequality.com/), stages partitioned data to S3, and loads into Snowflake — with every piece of infrastructure defined in Terraform so you know exactly what you're spinning up (and what it costs).
+This project is my attempt to break down the tools I use at work into something anyone can follow. It's an EL pipeline that scrapes 160,000+ reviews across four review types from [AirlineQuality.com](https://www.airlinequality.com/) — airlines, seats, lounges, and airports — stages type- and date-partitioned data to S3, and loads each type into its own Snowflake table, with every piece of infrastructure defined in Terraform so you know exactly what you're spinning up (and what it costs).
 
-- **26 parallel scraping tasks** (A-Z) with dynamic task mapping and dataset-driven DAG triggers
-- **Infrastructure as Code** — S3 bucket (versioning, encryption, lifecycle policies), IAM roles/users with least-privilege access, Snowflake database/schema/table/S3 external stage — all managed with Terraform
+- **Four review types scraped in parallel** (airline, seat, lounge, airport) via Airflow dynamic task mapping — each type fans out into its own set of entities (airlines, seat classes, lounges, airports), scraped with entity-level thread-pool parallelism inside each task
+- **Dataset-driven DAG chaining** — no cron guesswork between stages; each DAG triggers the next the moment its upstream data actually lands
+- **Data quality gates** — pre-load schema/null-rate/rating-range checks before anything reaches S3, and post-load COPY INTO reconciliation (rows parsed vs. rows loaded) written to an auditable `LOAD_AUDIT` table
+- **PII masking** — a tag-based Snowflake masking policy on `CUSTOMER_NAME`/`NATIONALITY`, so raw reviewer PII is masked for every role except an explicit `PII_READER`
+- **Infrastructure as Code** — S3 bucket (versioning, encryption, lifecycle policies), IAM roles/users with least-privilege access, and every Snowflake object (database, schema, 4 review tables, `LOAD_AUDIT`, external stage, masking policy) — all managed with Terraform, nothing created ad hoc at runtime
 - **Three-DAG pipeline** — crawl, process, load — chained via Airflow Datasets
 
 ## Architecture
@@ -16,67 +19,77 @@ This project is my attempt to break down the tools I use at work into something 
                     ┌──────────────────────────────┐
                     │   airlinequality.com         │
                     └──────────────┬───────────────┘
-                                   │ scrape (26 A-Z tasks)
+                                   │ scrape (4 types × per-entity parallelism)
                                    ▼
                     ┌──────────────────────────────┐
-                    │   S3: raw/YYYY/MM/           │
+                    │   S3: raw/<type>/YYYY/MM/    │
                     │   raw_data_YYYYMMDD.csv      │
                     └──────────────┬───────────────┘
-                                   │ clean + transform
+                                   │ quality gate + clean/transform
                                    ▼
                     ┌──────────────────────────────┐
-                    │   S3: processed/YYYY/MM/     │
+                    │  S3: processed/<type>/YYYY/MM/│
                     │   clean_data_YYYYMMDD.csv    │
                     └──────────────┬───────────────┘
-                                   │ COPY INTO
+                                   │ COPY INTO + post-load reconciliation
                                    ▼
                     ┌──────────────────────────────┐
                     │   Snowflake                  │
                     │   SKYTRAX_REVIEWS_DB.RAW     │
                     │   .AIRLINE_REVIEWS           │
+                    │   .SEAT_REVIEWS              │
+                    │   .LOUNGE_REVIEWS            │
+                    │   .AIRPORT_REVIEWS           │
+                    │   .LOAD_AUDIT                │
                     └──────────────────────────────┘
 ```
+
+`<type>` is one of `airlines` / `seats` / `lounges` / `airports` — every review type flows through the same shape, one dedicated table each.
 
 ## Stack
 
 | Layer | Technology |
 | ----- | ---------- |
 | Orchestrator | Apache Airflow (Astronomer Runtime, Docker) |
-| Storage | AWS S3 (landing zone) → Snowflake |
-| IaC | Terraform (AWS + Snowflake) |
-| Language | Python 3.12, pandas, BeautifulSoup |
+| Extraction | Python 3.12 — `requests` + BeautifulSoup, custom scraper (no API to hit) |
+| Storage | AWS S3 (type/date-partitioned landing zone) → Snowflake |
+| Data Governance | Pre/post-load quality gates + tag-based PII masking policy |
+| IaC | Terraform (two independent root modules: AWS, Snowflake) |
+| CI | GitHub Actions — lint + pytest on every push/PR to `main` (see [docs/cicd.md](docs/cicd.md)) |
 
 ## S3 Bucket Structure
 
-Data is date-partitioned by review date, organized into two prefixes:
+Data is partitioned **type-first, then by review date**:
 
 ```text
 s3://skytrax-reviews-landing-<account-id>/
   raw/
-    2024/
-      01/
-        raw_data_20240101.csv
-        raw_data_20240102.csv
-      02/
-        raw_data_20240201.csv
-    ...
+    airlines/
+      2024/
+        01/
+          raw_data_20240101.csv
+          raw_data_20240102.csv
+    seats/
+      2024/01/raw_data_20240101.csv
+    lounges/
+      2024/01/raw_data_20240101.csv
+    airports/
+      2024/01/raw_data_20240101.csv
   processed/
-    2024/
-      01/
-        clean_data_20240101.csv
-        clean_data_20240102.csv
+    airlines/
+      2024/01/clean_data_20240101.csv
     ...
 ```
 
-The bucket contains two top-level prefixes — `raw/` for scraped data and `processed/` for cleaned data:
+The bucket contains two top-level prefixes — `raw/` for scraped data and `processed/` for cleaned data — each split into the four type sub-prefixes above:
 
 ![S3 Bucket](assets/aws/s3_dir.png)
 
-Raw CSVs are written directly by the scraper, one file per review date:
+Raw CSVs are written directly by the scraper, one file per (type, review date):
 
 ![S3 Raw](assets/aws/s3_raw.png)
 
-Processed CSVs are cleaned, transformed, and ready for Snowflake ingestion:
+Processed CSVs have passed the pre-load quality gate (schema match, null-rate thresholds, star-rating range) and are ready for Snowflake ingestion:
 
 ![S3 Processed](assets/aws/s3_processed.png)
 
@@ -85,19 +98,36 @@ Processed CSVs are cleaned, transformed, and ready for Snowflake ingestion:
 - **Lifecycle rules** — transitions to Standard-IA after 30 days, expires old versions after 90 days
 - **Public access blocked** — all public access is denied at the bucket level
 
+Why stage to S3 at all instead of loading straight into Snowflake:
+
+| Reason | Why it matters |
+| ------ | --------------- |
+| Reliability | If Snowflake is unavailable, data is safely stored in S3 instead of being lost. |
+| Replayability | If a load fails or a transformation has a bug, you can reload the original files without re-scraping the source site. |
+| Cost | S3 storage is far cheaper than storing raw historical files in Snowflake. |
+| Decoupling | The scraper only writes to S3; the load step reads independently — a load-side bug never risks re-hitting the live site. |
+| Auditability | The original raw files are always available for debugging or compliance. |
+
 ## Loading Strategy
 
-**Incremental (daily)**: The `skytrax_crawl` DAG runs at 02:00 UTC, scrapes only yesterday's reviews, and uploads to S3. The downstream `skytrax_process` and `skytrax_snowflake` DAGs trigger automatically via Airflow Datasets — no cron, no polling. Each review date maps to exactly one CSV file, so re-runs are idempotent.
+**Incremental (daily)**: The `skytrax_crawl` DAG runs at **16:00 UTC**, scraping each of the 4 review types for reviews posted since the day before *that run's own logical date* (not wall-clock "yesterday" — so clearing and rerunning a specific past run recomputes the correct target day instead of silently re-fetching today's yesterday). Each (type, review date) maps to exactly one CSV file, so re-runs are idempotent — and `COPY INTO` at the Snowflake end additionally dedupes by file, so nothing double-loads.
 
-**Bulk backfill**: For the initial load, trigger `skytrax_crawl` with `full_scrape=True` to scrape all historical reviews (back to 2010). Snowflake's `COPY INTO` tracks which files have already been loaded, so re-running the bulk load is safe — no duplicates.
+**Bulk backfill**: Trigger `skytrax_crawl` with `full_scrape=True` to scrape each type's full review history. The scraper writes every row to the S3/local partition matching **that review's own date**, not the run date — so a multi-year backfill lands every file in the correct `YYYY/MM` partition regardless of when the scrape actually ran.
+
+## Data Governance
+
+- **Pre-load quality gate** (`include/tasks/common/quality.py`) — before a processed file is ever uploaded, it's checked for schema drift, non-empty rows, null-rate thresholds on required columns, and star ratings within `[1, 5]`. A bad file never reaches S3 or Snowflake.
+- **Post-load reconciliation** — `copy_into()` compares Snowflake's own `COPY INTO` result (`rows_parsed` vs. `rows_loaded`, `errors_seen`) and writes every load outcome to `RAW.LOAD_AUDIT`, a Terraform-managed table. A partial or rejected load fails the task loudly instead of silently under-loading.
+- **PII masking** — `terraform/snowflake/masking.tf` tags `CUSTOMER_NAME`/`NATIONALITY` across all 4 tables with a `PII` tag bound to a masking policy; only `PII_READER` (or `ACCOUNTADMIN`) sees unmasked values.
+- **Secrets hygiene** — `.env`, `terraform.tfvars`, and all `.tfstate` files are gitignored; no credentials are ever committed.
 
 ## DAGs
 
 | DAG | Trigger | What it does |
 | --- | ------- | ------------ |
-| `skytrax_crawl` | Daily 02:00 UTC | Scrapes reviews, splits by date, uploads raw CSVs to S3 |
-| `skytrax_process` | Dataset (raw) | Downloads raw CSVs, cleans/transforms, uploads processed CSVs |
-| `skytrax_snowflake` | Dataset (processed) | Runs COPY INTO Snowflake for each review date |
+| `skytrax_crawl` | Daily 16:00 UTC (or manual, `full_scrape=True` for a backfill) | Scrapes all 4 review types (dynamic task mapping over `airline`/`seat`/`lounge`/`airport`), splits by review date, uploads raw CSVs to S3 |
+| `skytrax_process` | Dataset (raw) | Downloads raw CSVs, cleans/transforms, runs the pre-load quality gate, uploads processed CSVs |
+| `skytrax_snowflake` | Dataset (processed) | Runs `COPY INTO` per (type, review date), reconciles the result, and records it in `RAW.LOAD_AUDIT` |
 
 ## Getting Started
 
@@ -119,6 +149,10 @@ Configure Airflow connections, start the Astronomer environment, and run the ful
 
 Load data into Snowflake — both incremental (via DAG) and bulk backfill.
 
+### 5. [CI](docs/cicd.md)
+
+What runs on every push/PR (lint + tests) and what stays manual (deploy, `terraform apply`) — and why.
+
 ## Quick Reference
 
 ```bash
@@ -139,7 +173,8 @@ make test
 astro dev start
 
 # Full infrastructure setup
-cd terraform && terraform init && terraform apply
+cd terraform/aws && terraform init && terraform apply
+cd ../snowflake && terraform init && terraform apply
 ```
 
 ## Directory Layout
@@ -148,11 +183,13 @@ cd terraform && terraform init && terraform apply
 dags/                  DAG definitions (no business logic)
 include/
   tasks/
-    extract/           Scraper → landing/raw/
-    transform/         Cleaning pipeline → landing/processed/
-    load/              S3 upload + Snowflake COPY INTO
-  sql/                 SQL templates
-terraform/             S3 bucket, IAM, Snowflake resources
+    extract/           Scraper → landing/raw/<type>/
+    transform/         Cleaning + quality gate → landing/processed/<type>/
+    load/              S3 upload + Snowflake COPY INTO + load reconciliation
+  sql/                 SQL templates (tables are Terraform-managed, not created at runtime)
+terraform/
+  aws/                 S3 bucket, IAM role/user
+  snowflake/           Database, schema, 4 review tables, LOAD_AUDIT, stage, PII masking policy
 tests/                 Unit tests
 docs/                  Setup guides
 landing/               Local data directory (CSVs gitignored)
