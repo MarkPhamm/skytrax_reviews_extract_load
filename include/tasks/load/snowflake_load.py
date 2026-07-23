@@ -81,10 +81,86 @@ def ensure_stage(bucket: str, role_arn: str, conn_id: str = "snowflake_default")
 # ---------------------------------------------------------------------------
 
 
-def copy_into(category: str, review_date: date, conn_id: str = "snowflake_default") -> None:
-    """COPY INTO the category's table for one review date's processed CSV."""
+def copy_into(category: str, review_date: date, conn_id: str = "snowflake_default") -> dict:
+    """COPY INTO the category's table for one review date's processed CSV.
+
+    Post-load quality gate: reconciles the COPY INTO result metadata
+    (rows_parsed vs rows_loaded, errors_seen), records the outcome in
+    RAW.LOAD_AUDIT, and raises if any row was rejected or nothing loaded.
+    """
     s3_key = paths.processed_key(category, review_date)
     table = table_name(category)
     sql = _read_sql("copy_into.sql").replace("{{ table }}", table).replace("{{ s3_key }}", s3_key)
-    _get_hook(conn_id).run(sql)
-    logger.info("Loaded %s → %s", s3_key, table)
+
+    hook = _get_hook(conn_id)
+    results = hook.get_records(sql)
+    summary = _summarize_copy_result(results)
+    logger.info("COPY INTO %s ← %s: %s", table, s3_key, summary)
+
+    _record_load_audit(hook, category, review_date, s3_key, table, summary)
+
+    if summary["status"] == "SKIPPED":
+        # File already loaded in a previous run (COPY dedupes by file) — a
+        # no-op re-run, not a failure.
+        logger.info("File already loaded, nothing to do: %s", s3_key)
+        return summary
+    if summary["errors_seen"]:
+        raise RuntimeError(
+            f"Post-load check failed for {s3_key} → {table}: "
+            f"{summary['errors_seen']} rejected row(s), "
+            f"first error: {summary['first_error']}"
+        )
+    if summary["rows_loaded"] != summary["rows_parsed"] or summary["rows_loaded"] == 0:
+        raise RuntimeError(
+            f"Post-load reconciliation failed for {s3_key} → {table}: "
+            f"parsed {summary['rows_parsed']} row(s) but loaded {summary['rows_loaded']}."
+        )
+    return summary
+
+
+def _summarize_copy_result(results: list) -> dict:
+    """Normalize COPY INTO result rows into an audit-friendly summary.
+
+    A load returns one row per file:
+      (file, status, rows_parsed, rows_loaded, error_limit, errors_seen,
+       first_error, ...).
+    A re-run of an already-loaded file returns a single informational row
+    ('Copy executed with 0 files processed.').
+    """
+    row = results[0] if results else ()
+    if len(row) < 6:
+        return {
+            "status": "SKIPPED",
+            "rows_parsed": 0,
+            "rows_loaded": 0,
+            "errors_seen": 0,
+            "first_error": None,
+        }
+    return {
+        "status": str(row[1]),
+        "rows_parsed": int(row[2] or 0),
+        "rows_loaded": int(row[3] or 0),
+        "errors_seen": int(row[5] or 0),
+        "first_error": row[6] if len(row) > 6 else None,
+    }
+
+
+def _record_load_audit(
+    hook, category: str, review_date: date, s3_key: str, table: str, summary: dict
+) -> None:
+    """Persist one load outcome to RAW.LOAD_AUDIT (created if missing)."""
+    hook.run(_read_sql("create_table_load_audit.sql"))
+    hook.run(
+        _read_sql("insert_load_audit.sql"),
+        parameters={
+            "category": category,
+            "review_date": review_date.isoformat(),
+            "s3_key": s3_key,
+            "target_table": table,
+            "status": summary["status"],
+            "rows_parsed": summary["rows_parsed"],
+            "rows_loaded": summary["rows_loaded"],
+            "errors_seen": summary["errors_seen"],
+            "first_error": summary["first_error"],
+        },
+    )

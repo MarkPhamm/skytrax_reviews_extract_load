@@ -27,6 +27,7 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 
 from include.tasks.common import paths
+from include.tasks.common.quality import validate_processed_csv
 from include.tasks.load.s3_upload import upload_processed as _upload
 from include.tasks.transform.processing import clean_file
 
@@ -108,6 +109,10 @@ def process_dag():
             clean_file(category, Path(tmp_path), output_path)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+        # Pre-load quality gate: schema, non-empty, null rates, rating ranges.
+        # Raises DataQualityError so a bad file never reaches S3/Snowflake.
+        validate_processed_csv(category, output_path)
 
         return {"category": category, "date_str": date_str, "processed_path": str(output_path)}
 

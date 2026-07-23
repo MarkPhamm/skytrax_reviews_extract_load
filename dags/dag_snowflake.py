@@ -55,9 +55,14 @@ def snowflake_dag():
         ]
 
     @task()
-    def load_one(category: str, date_str: str) -> None:
-        """COPY INTO the category's Snowflake table for one review date."""
-        copy_into(category, date.fromisoformat(date_str))
+    def load_one(category: str, date_str: str) -> dict:
+        """COPY INTO the category's Snowflake table for one review date.
+
+        copy_into runs the post-load reconciliation (rows_parsed vs
+        rows_loaded, rejected rows) and writes RAW.LOAD_AUDIT; the returned
+        summary lands in XCom as load evidence.
+        """
+        return copy_into(category, date.fromisoformat(date_str))
 
     # ── Wire up ──────────────────────────────────────────────────────────────
 
