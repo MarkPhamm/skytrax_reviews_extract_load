@@ -76,10 +76,13 @@ def crawl_dag():
         """
         context = get_current_context()
         full_scrape: bool = context["params"]["full_scrape"]
-        # Derived from this run's logical_date (not wall-clock date.today()) so
+        # Derived from this run's own date (not wall-clock date.today()) so
         # clearing/rerunning a past run recomputes the correct target day instead
-        # of silently re-scraping "yesterday relative to right now".
-        run_day = context["logical_date"].date()
+        # of silently re-scraping "yesterday relative to right now". In Airflow 3
+        # a manually-triggered run has logical_date=None, so fall back to
+        # run_after (always set) — i.e. when the run was actually kicked off.
+        dag_run = context["dag_run"]
+        run_day = (dag_run.logical_date or dag_run.run_after).date()
         since_date = None if full_scrape else run_day - timedelta(days=1)
 
         default_workers = "10" if full_scrape else "3"
