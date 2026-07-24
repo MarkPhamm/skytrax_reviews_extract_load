@@ -28,6 +28,7 @@ from airflow.decorators import dag, task
 from airflow.models import Param, Variable
 from airflow.operators.python import get_current_context
 
+from include.tasks.common.alerts import notify_failure
 from include.tasks.extract.scraper import CATEGORIES, ReviewScraper
 from include.tasks.load.s3_upload import get_s3_client
 from include.tasks.load.s3_upload import upload_raw as _upload
@@ -43,6 +44,7 @@ default_args = {
     "owner": "airflow",
     "retries": 1,
     "retry_delay": timedelta(seconds=10),
+    "on_failure_callback": notify_failure,
 }
 
 
