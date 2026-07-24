@@ -1,11 +1,24 @@
 """
 Data quality gates for the EL pipeline.
 
-Post-upload — ``validate_processed_csv``: run against a processed CSV *after*
-              it is uploaded to S3, so a rejected file is still available in
-              S3/Snowflake rather than blocking the pipeline on it. Flags
-              schema drift, empty files, null-rate breaches, or out-of-range
-              star ratings by raising ``DataQualityError``.
+Post-upload — ``validate_processed_csv``: runs against each processed CSV
+              *after* it has been uploaded to S3, and never blocks processing.
+              Flags schema drift, empty files, null-rate breaches, or
+              out-of-range star ratings by raising ``DataQualityError``;
+              dag_process catches it, moves the uploaded file to the
+              quarantine/<type>/ S3 prefix (out of COPY INTO's reach), and
+              records the date in the QUALITY_REJECTED__<category> Airflow
+              Variable so the Snowflake DAG also excludes it explicitly.
+
+              Validating after upload is deliberate, not an accident of
+              ordering: the landing zone stays a faithful record of exactly
+              what the pipeline produced (a rejected file is preserved in
+              quarantine for inspection and replay once the check or the
+              cleaning is fixed, instead of vanishing before it ever reached
+              S3), one bad date never stalls the other dates or categories,
+              and a single daily run and a multi-year backfill go through the
+              identical supervised path.
+
 Post-load   — consumed by ``include.tasks.load.snowflake_load.copy_into_bulk``:
               reconciles Snowflake COPY INTO results (rows_parsed vs
               rows_loaded, errors_seen) and records every load in RAW.LOAD_AUDIT.
@@ -37,7 +50,7 @@ MAX_NULL_RATE = {"review": 0.05}
 
 
 class DataQualityError(ValueError):
-    """A processed file failed a pre-load quality gate."""
+    """A processed file failed the post-upload quality gate."""
 
 
 def expected_columns(category: str) -> List[str]:
@@ -67,7 +80,7 @@ def rating_columns(category: str) -> List[str]:
 
 
 def validate_processed_csv(category: str, csv_path: Union[str, Path]) -> Dict:
-    """Pre-load gate: validate one processed CSV before upload/load.
+    """Post-upload gate: validate one processed CSV after it lands in S3.
 
     Checks, in order:
       1. file exists and has at least one data row
@@ -76,7 +89,9 @@ def validate_processed_csv(category: str, csv_path: Union[str, Path]) -> Dict:
       4. star ratings are within [RATING_MIN, RATING_MAX] (nulls allowed)
 
     Returns a summary dict {category, path, rows, columns} on success.
-    Raises DataQualityError on the first violation so Airflow fails loudly.
+    Raises DataQualityError on the first violation. The caller (dag_process)
+    catches it and quarantines the file rather than failing the task — see
+    the module docstring for why this gate is deliberately non-blocking.
     """
     csv_path = Path(csv_path)
     if not csv_path.exists():
@@ -133,5 +148,5 @@ def validate_processed_csv(category: str, csv_path: Union[str, Path]) -> Dict:
         "rows": int(len(df)),
         "columns": int(len(df.columns)),
     }
-    logger.info("Pre-load quality checks passed: %s", summary)
+    logger.info("Post-upload quality checks passed: %s", summary)
     return summary
