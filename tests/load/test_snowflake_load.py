@@ -133,3 +133,43 @@ def test_copy_into_bulk_all_dates_excluded_skips_copy():
     hook.get_records.assert_not_called()
     assert totals["files_loaded"] == 0
     assert totals["rows_loaded"] == 0
+
+
+# ---------------------------------------------------------------------------
+# copy_into_bulk — quarantine invariant: a clean run (no exclusions) scans
+# only processed/<type>/, so files dag_process moved to quarantine/<type>/
+# can never be loaded by a later run.
+# ---------------------------------------------------------------------------
+
+
+def test_copy_into_bulk_clean_run_scans_only_processed_prefix():
+    hook = MagicMock()
+    hook.get_records.return_value = [
+        ("processed/seats/2026/03/clean_data_20260312.csv", "LOADED", 5, 5, 1, 0, None),
+    ]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        mod.copy_into_bulk("seat")  # no exclude_dates → prefix-wide branch
+
+    sql = hook.get_records.call_args.args[0]
+    assert "processed/seats/" in sql
+    assert "quarantine" not in sql
+
+
+def test_copy_into_bulk_exclusion_lists_never_reference_quarantine():
+    hook = MagicMock()
+    hook.get_records.return_value = [
+        ("processed/seats/2026/03/clean_data_20260310.csv", "LOADED", 5, 5, 1, 0, None),
+    ]
+    with patch.object(mod, "_get_hook", return_value=hook):
+        mod.copy_into_bulk(
+            "seat",
+            all_dates=["2026-03-10", "2026-03-11"],
+            exclude_dates={"2026-03-11"},
+        )
+
+    sql = hook.get_records.call_args.args[0]
+    # Explicit FILES list is built from processed_key() only — the rejected
+    # date is dropped entirely, not redirected to its quarantine key.
+    assert "processed/seats/2026/03/clean_data_20260310.csv" in sql
+    assert "20260311" not in sql
+    assert "quarantine" not in sql

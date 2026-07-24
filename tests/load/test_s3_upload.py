@@ -145,6 +145,66 @@ def test_upload_raw_raises_without_bucket(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# move_processed_to_quarantine — rejected files leave the COPY INTO prefix
+# ---------------------------------------------------------------------------
+
+
+def test_quarantine_s3_key():
+    assert (
+        mod.quarantine_s3_key("seat", date(2026, 3, 11))
+        == "quarantine/seats/2026/03/clean_data_20260311.csv"
+    )
+
+
+def test_move_to_quarantine_copies_then_deletes(monkeypatch):
+    monkeypatch.setattr(mod, "STORAGE_MODE", "s3")
+    mock_client = MagicMock()
+
+    uri = mod.move_processed_to_quarantine(
+        "seat", date(2026, 3, 11), bucket="my-bucket", client=mock_client
+    )
+
+    src = "processed/seats/2026/03/clean_data_20260311.csv"
+    mock_client.copy_object.assert_called_once_with(
+        Bucket="my-bucket",
+        CopySource={"Bucket": "my-bucket", "Key": src},
+        Key="quarantine/seats/2026/03/clean_data_20260311.csv",
+    )
+    mock_client.delete_object.assert_called_once_with(
+        Bucket="my-bucket", Key="processed/seats/2026/03/clean_data_20260311.csv"
+    )
+    assert uri == "s3://my-bucket/quarantine/seats/2026/03/clean_data_20260311.csv"
+
+
+def test_move_to_quarantine_skips_when_local(monkeypatch):
+    monkeypatch.setattr(mod, "STORAGE_MODE", "local")
+    mock_client = MagicMock()
+    uri = mod.move_processed_to_quarantine(
+        "seat", date(2026, 3, 11), bucket="my-bucket", client=mock_client
+    )
+    assert uri is None
+    mock_client.copy_object.assert_not_called()
+    mock_client.delete_object.assert_not_called()
+
+
+def test_move_to_quarantine_raises_without_bucket(monkeypatch):
+    monkeypatch.setattr(mod, "STORAGE_MODE", "s3")
+    monkeypatch.setattr(mod, "S3_BUCKET", "")
+    with pytest.raises(ValueError, match="S3_BUCKET"):
+        mod.move_processed_to_quarantine("seat", date(2026, 3, 11))
+
+
+def test_move_to_quarantine_reuses_supplied_client(monkeypatch):
+    monkeypatch.setattr(mod, "STORAGE_MODE", "s3")
+    mock_client = MagicMock()
+    with patch("boto3.client") as mock_boto3_client:
+        mod.move_processed_to_quarantine(
+            "seat", date(2026, 3, 11), bucket="my-bucket", client=mock_client
+        )
+    mock_boto3_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # client reuse — a caller-supplied client is used instead of building a new one
 # ---------------------------------------------------------------------------
 
