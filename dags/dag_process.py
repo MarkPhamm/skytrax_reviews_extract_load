@@ -36,6 +36,7 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 
 from include.tasks.common import paths
+from include.tasks.common.alerts import notify_failure
 from include.tasks.common.quality import DataQualityError, validate_processed_csv
 from include.tasks.load.s3_upload import get_s3_client
 from include.tasks.load.s3_upload import move_processed_to_quarantine as _move_to_quarantine
@@ -51,6 +52,7 @@ default_args = {
     "owner": "airflow",
     "retries": 1,
     "retry_delay": timedelta(seconds=10),
+    "on_failure_callback": notify_failure,
 }
 
 
