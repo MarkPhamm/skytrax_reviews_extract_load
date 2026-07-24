@@ -61,6 +61,20 @@ def processed_key(category: str, run_date: date) -> str:
     )
 
 
+def quarantine_key(category: str, run_date: date) -> str:
+    """S3 key for a quarantined CSV: quarantine/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
+
+    Quality-rejected processed files are moved here, out of processed/, so a
+    prefix-wide COPY INTO over processed/<type>/ can never pick them up —
+    Snowflake's load history only skips files it has already LOADED, not files
+    that were rejected before ever loading.
+    """
+    return (
+        f"quarantine/{partition(category)}/{run_date.strftime('%Y')}/{run_date.strftime('%m')}"
+        f"/clean_data_{run_date.strftime('%Y%m%d')}.csv"
+    )
+
+
 def raw_local_path(category: str, run_date: date) -> Path:
     """Absolute local path for a raw CSV under LANDING_DIR."""
     return LANDING_DIR / raw_key(category, run_date)

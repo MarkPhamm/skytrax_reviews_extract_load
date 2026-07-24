@@ -8,6 +8,10 @@ Upload paths mirror the local layout exactly (type-first partitions):
   local:  landing/processed/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
   S3:     s3://<bucket>/processed/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
 
+Quality-rejected processed files are moved (copy+delete) to a mirrored
+  S3:     s3://<bucket>/quarantine/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
+prefix so the Snowflake COPY INTO path can never see them.
+
 Keys/paths are built by ``include.tasks.common.paths`` (single source of truth).
 
 Environment variables
@@ -54,6 +58,10 @@ def raw_s3_key(category: str, run_date: date) -> str:
 
 def processed_s3_key(category: str, run_date: date) -> str:
     return paths.processed_key(category, run_date)
+
+
+def quarantine_s3_key(category: str, run_date: date) -> str:
+    return paths.quarantine_key(category, run_date)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +182,43 @@ def upload_processed(
         use_airflow_hook=use_airflow_hook,
         client=client,
     )
+
+
+def move_processed_to_quarantine(
+    category: str,
+    run_date: date,
+    bucket: Optional[str] = None,
+    use_airflow_hook: bool = False,
+    client=None,
+) -> Optional[str]:
+    """
+    Move a quality-rejected processed file from processed/ to quarantine/.
+
+    S3 has no rename, so this is copy-then-delete. Getting the object out of
+    the processed/<type>/ prefix is what matters: Snowflake's load history
+    only skips files it has already LOADED, so a rejected (never-loaded) file
+    left at its processed/ key would be silently picked up by the next
+    prefix-wide COPY INTO.
+
+    Returns the s3:// URI of the quarantined object, or None when
+    STORAGE_MODE=local (nothing was uploaded, so there is nothing to move).
+    """
+    if STORAGE_MODE == "local":
+        logger.info("STORAGE_MODE=local — skipping quarantine move for %s %s", category, run_date)
+        return None
+
+    bucket = bucket or S3_BUCKET
+    if not bucket:
+        raise ValueError("S3_BUCKET env var is not set and no bucket was passed")
+
+    src_key = processed_s3_key(category, run_date)
+    dst_key = quarantine_s3_key(category, run_date)
+    client = client or get_s3_client(use_airflow_hook=use_airflow_hook)
+    client.copy_object(Bucket=bucket, CopySource={"Bucket": bucket, "Key": src_key}, Key=dst_key)
+    client.delete_object(Bucket=bucket, Key=src_key)
+    uri = f"s3://{bucket}/{dst_key}"
+    logger.warning("Quarantined %s → %s", src_key, uri)
+    return uri
 
 
 # ---------------------------------------------------------------------------
