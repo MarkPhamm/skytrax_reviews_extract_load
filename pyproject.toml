@@ -18,6 +18,12 @@ dev = [
     "black",
     "flake8",
     "isort",
+    # Airflow itself, matching Astro Runtime 3.0-x — lets pytest import the
+    # DAG files (DagBag integrity test) without a running Astro container.
+    "apache-airflow>=3.0,<3.1",
+    "apache-airflow-providers-standard",
+    "apache-airflow-providers-amazon>=8.0.0",
+    "apache-airflow-providers-snowflake>=5.0.0",
 ]
 
 [tool.uv]

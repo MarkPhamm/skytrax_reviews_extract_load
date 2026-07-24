@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://www.airlinequality.com"
 PAGE_SIZE = 100
 
+# Politeness defaults for airlinequality.com — identify the bot and pace
+# requests so a full scrape does not look like a denial-of-service.
+USER_AGENT = (
+    "SkytraxReviewsBot/1.0 (+https://github.com/MarkPhamm/skytrax_reviews_extract_load; "
+    "research/analytics; contact via GitHub issues)"
+)
+# Seconds to wait between successful page fetches (retries use their own backoff).
+REQUEST_THROTTLE_SECONDS = 0.5
+
 # Link text that isn't an entity name (e.g. a "Read more" link pointing at the
 # same URL as the real name link) — fall back to the slug-derived title instead.
 _GENERIC_LINK_TEXT = {"read more", "more", "details", "view"}
@@ -127,16 +136,24 @@ class ReviewScraper:
         # Expand the urllib3 connection pool to match worker count so threads
         # don't queue waiting for a free connection slot.
         self._session = requests.Session()
+        self._session.headers.update({"User-Agent": USER_AGENT})
         adapter = requests.adapters.HTTPAdapter(pool_maxsize=max_workers)
         self._session.mount("https://", adapter)
         self._session.mount("http://", adapter)
+
+    def _get(self, url: str, timeout: int = 30) -> requests.Response:
+        """GET with a polite inter-request throttle after each attempt."""
+        try:
+            return self._session.get(url, timeout=timeout)
+        finally:
+            time.sleep(REQUEST_THROTTLE_SECONDS)
 
     def get_entity_urls(self) -> List[Tuple[str, str]]:
         """Return list of (entity_name, entity_url) from the category's A-Z page."""
         logger.info("Fetching %s list...", self.category.key)
 
         try:
-            response = self._session.get(self.category.index_url, timeout=10)
+            response = self._get(self.category.index_url, timeout=10)
             response.raise_for_status()
         except requests.RequestException as e:
             logger.error("Failed to fetch %s list: %s", self.category.key, e)
@@ -186,7 +203,7 @@ class ReviewScraper:
             response = None
             for attempt in range(1, 4):  # up to 3 attempts
                 try:
-                    response = self._session.get(url, timeout=30)
+                    response = self._get(url, timeout=30)
                     response.raise_for_status()
                     break
                 except requests.Timeout:

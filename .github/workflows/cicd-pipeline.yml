@@ -29,3 +29,31 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ -v
+
+  terraform:
+    name: Terraform fmt & validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [terraform/aws, terraform/snowflake]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: terraform fmt (check)
+        working-directory: ${{ matrix.root }}
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (backend=false)
+        working-directory: ${{ matrix.root }}
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.root }}
+        run: terraform validate
