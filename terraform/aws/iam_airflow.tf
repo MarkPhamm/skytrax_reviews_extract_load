@@ -1,9 +1,8 @@
 # ---------------------------------------------------------------------------
-# Shared S3 policy — landing bucket read/write
+# Airflow S3 policy — landing bucket read/write
 #
-# Attached to:
-#   - Airflow IAM user  (this file)  — upload / manage objects
-#   - Snowflake IAM role (iam_snowflake.tf) — COPY INTO from the stage
+# Attached to the Airflow IAM user (this file) for upload / manage objects.
+# Snowflake's stage role uses a separate read-only policy (iam_snowflake.tf).
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "airflow_s3" {
