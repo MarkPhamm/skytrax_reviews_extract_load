@@ -30,7 +30,7 @@ Create a `.env` file in the project root (this file is gitignored):
 STORAGE_MODE=s3
 S3_BUCKET=<your-bucket-name>
 AIRFLOW_CONN_AWS_S3_CONNECTION=aws://<ACCESS_KEY_ID>:<URL_ENCODED_SECRET>@/?region_name=us-east-1
-AIRFLOW_CONN_SNOWFLAKE_DEFAULT='{"conn_type":"snowflake","login":"<SNOWFLAKE_USER>","password":"<SNOWFLAKE_PASSWORD>","schema":"RAW","extra":{"account":"<ORG>-<ACCOUNT>","database":"SKYTRAX_REVIEWS_DB","warehouse":"COMPUTE_WH","role":"SYSADMIN"}}'
+AIRFLOW_CONN_SNOWFLAKE_DEFAULT='{"conn_type":"snowflake","login":"<SNOWFLAKE_USER>","password":"<SNOWFLAKE_PASSWORD>","schema":"RAW","extra":{"account":"<ORG>-<ACCOUNT>","database":"SKYTRAX_REVIEWS_DB","warehouse":"COMPUTE_WH","role":"SKYTRAX_LOADER"}}'
 ```
 
 ### Where to get the values
@@ -58,8 +58,8 @@ If your secret key contains special characters, URL-encode them:
 Example:
 
 ```text
-# Original:  GSstxwFTvbwTIvIczSpGZLv810qLwLG+EpaVi5St
-# Encoded:   GSstxwFTvbwTIvIczSpGZLv810qLwLG%2BEpaVi5St
+# Original:  EXAMPLESECRET+with/special=chars
+# Encoded:   EXAMPLESECRET%2Bwith%2Fspecial%3Dchars
 ```
 
 ## Step 3: Start Airflow
