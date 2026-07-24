@@ -218,7 +218,10 @@ def test_scrape_airline_reviews_retries_on_timeout(mock_get, mock_sleep):
         "Test Air", "https://example.com/airline-reviews/test-air"
     )
     assert len(reviews) == 1
-    assert mock_sleep.call_count == 2  # slept between retries
+    # Retry backoff sleeps (5s, 10s). Polite throttle also sleeps on every
+    # _get attempt, so total call_count > 2 — assert the retry waits specifically.
+    sleep_args = [c.args[0] for c in mock_sleep.call_args_list if c.args]
+    assert 5 in sleep_args and 10 in sleep_args
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +229,9 @@ def test_scrape_airline_reviews_retries_on_timeout(mock_get, mock_sleep):
 # ---------------------------------------------------------------------------
 
 
+@patch("include.tasks.extract.scraper.time.sleep")
 @patch("include.tasks.extract.scraper.requests.Session.get")
-def test_scrape_all_airlines_saves_csv(mock_get, tmp_path, monkeypatch):
+def test_scrape_all_airlines_saves_csv(mock_get, mock_sleep, tmp_path, monkeypatch):
     monkeypatch.setattr(paths_mod, "LANDING_DIR", tmp_path)
 
     mock_get.side_effect = [
@@ -238,7 +242,11 @@ def test_scrape_all_airlines_saves_csv(mock_get, tmp_path, monkeypatch):
         _mock_response(_EMPTY_PAGE_HTML),  # Lufthansa page 2 → stop
     ]
 
-    scraper = AllAirlineReviewScraper(num_pages_per_airline=5, run_date=date(2025, 3, 27))
+    # max_workers=1 keeps Session.get side_effect order deterministic under
+    # the polite inter-request throttle (parallel workers race the mock list).
+    scraper = AllAirlineReviewScraper(
+        num_pages_per_airline=5, run_date=date(2025, 3, 27), max_workers=1
+    )
     outputs = scraper.scrape_all_airlines()
 
     # Both test reviews have date 2024-01-10, so they land in one file
