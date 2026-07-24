@@ -42,6 +42,25 @@ def test_processed_key_per_type():
     )
 
 
+def test_quarantine_key_mirrors_processed_layout():
+    # Same partition + filename as the processed key, under quarantine/ —
+    # so a quarantined file is findable from its processed counterpart.
+    assert (
+        paths.quarantine_key("seat", date(2026, 3, 12))
+        == "quarantine/seats/2026/03/clean_data_20260312.csv"
+    )
+    assert paths.quarantine_key("airline", date(2025, 1, 5)) == (
+        "quarantine/airlines/2025/01/clean_data_20250105.csv"
+    )
+
+
+def test_quarantine_key_never_under_processed_prefix():
+    # The whole point of quarantine: a prefix-wide COPY INTO over
+    # processed/<type>/ must never see a quarantined file.
+    key = paths.quarantine_key("lounge", date(2026, 3, 12))
+    assert not key.startswith("processed/")
+
+
 def test_local_paths_under_landing_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "LANDING_DIR", tmp_path)
     raw = paths.raw_local_path("airport", date(2026, 3, 12))

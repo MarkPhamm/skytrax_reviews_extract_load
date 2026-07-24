@@ -10,6 +10,7 @@ thread pool — unconditionally, so processing never blocks or fails on a data
 quality issue.
 
 A post-upload quality check then validates each file; a date that fails is
+moved to the quarantine/<type>/ S3 prefix (out of COPY INTO's reach) and
 recorded (QUALITY_REJECTED__<category> Airflow Variable) so skytrax_snowflake can
 skip loading it, without ever refusing to process/upload it. Only a genuine
 processing error (download/clean/upload) fails a category task.
@@ -37,6 +38,7 @@ from airflow.models import Variable
 from include.tasks.common import paths
 from include.tasks.common.quality import DataQualityError, validate_processed_csv
 from include.tasks.load.s3_upload import get_s3_client
+from include.tasks.load.s3_upload import move_processed_to_quarantine as _move_to_quarantine
 from include.tasks.load.s3_upload import upload_processed as _upload
 from include.tasks.transform.processing import clean_file
 
@@ -126,15 +128,32 @@ def _upload_one(category: str, date_str: str, processed_path: Path, client=None)
     )
 
 
+def _quarantine_one(category: str, date_str: str, client=None) -> str | None:
+    """Move a quality-rejected upload from processed/ to quarantine/ in S3."""
+    if os.getenv("STORAGE_MODE", "local") == "local":
+        return None
+    bucket = os.environ["S3_BUCKET"]
+    return _move_to_quarantine(
+        category,
+        date.fromisoformat(date_str),
+        bucket=bucket,
+        use_airflow_hook=True,
+        client=client,
+    )
+
+
 def _process_one(category: str, date_str: str, client=None) -> dict:
     """Download → clean → upload → post-upload quality check, for one (category, date).
 
     Download/clean/upload always run and are never skipped or blocked by a
     quality issue. Only the quality check's outcome is conditional: a
     DataQualityError is caught and recorded as quality_passed=False rather
-    than raised — the file is still processed and uploaded either way. Any
-    other exception (download/clean/upload failure) still propagates and
-    fails the task, since that's a real processing error, not a quality result.
+    than raised — and the uploaded file is moved from processed/ to
+    quarantine/ so no future prefix-wide COPY INTO can load it (Snowflake's
+    load history only skips files it already LOADED, so a rejected file left
+    in processed/ would be picked up by the next clean run). Any other
+    exception (download/clean/upload failure) still propagates and fails the
+    task, since that's a real processing error, not a quality result.
     """
     raw_path = _download_one(category, date_str, client=client)
     processed_path = _clean_one(category, date_str, raw_path)
@@ -146,6 +165,7 @@ def _process_one(category: str, date_str: str, client=None) -> dict:
     except DataQualityError as e:
         quality_passed, quality_error = False, str(e)
         logger.warning("Quality check failed for %s %s: %s", category, date_str, e)
+        uri = _quarantine_one(category, date_str, client=client)
 
     return {
         "category": category,

@@ -159,10 +159,16 @@ def copy_into_bulk(
     loads (and dedupes) every file in one statement. Safe to call even when
     most files are already loaded — those come back with status SKIPPED.
 
-    ``exclude_dates`` (e.g. dates that failed the post-load quality check)
-    are never loaded: pass ``all_dates`` (every date this run queued for the
+    ``exclude_dates`` (dates that failed the post-upload quality check) are
+    never loaded: pass ``all_dates`` (every date this run queued for the
     category) alongside it, and the COPY INTO explicitly lists only the
     remaining good files instead of scanning the whole prefix.
+
+    Defense-in-depth: quality-rejected files are also physically moved to the
+    quarantine/<type>/ prefix by dag_process, so even the prefix-wide branch
+    below can never see them. The explicit exclusion here is kept as a second
+    layer — it protects the current run if a quarantine move fails, and makes
+    the skip visible in this task's logs rather than relying on S3 state.
     """
     table = table_name(category)
     prefix = f"processed/{paths.partition(category)}/"
