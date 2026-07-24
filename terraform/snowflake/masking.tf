@@ -1,10 +1,17 @@
 # ---------------------------------------------------------------------------
 # Data governance — PII masking (tag-based)
 #
-# A masking policy attached to the PII tag: any column tagged with
-# SKYTRAX_REVIEWS_DB.RAW.PII is dynamically masked unless the session has the
-# PII_READER role (or ACCOUNTADMIN). dbt re-applies the tag to mart columns
-# via post-hooks after each rebuild, so masking survives `dbt run`.
+# Three pieces, all needed before any masking actually happens:
+#   1. the MASK_PII_STRING policy (what masking does),
+#   2. the PII tag with the policy bound via `masking_policies` (the
+#      snowflakedb provider v1.x replacement for the old
+#      snowflake_tag_masking_policy_association resource),
+#   3. snowflake_tag_association resources setting the tag on every PII
+#      column — a tag + policy with no column associations masks nothing.
+# Any column tagged SKYTRAX_REVIEWS_DB.RAW.PII is dynamically masked unless
+# the session has the PII_READER role (or ACCOUNTADMIN). dbt re-applies the
+# tag to mart columns via post-hooks after each rebuild, so masking survives
+# `dbt run`.
 # ---------------------------------------------------------------------------
 
 # create the account role that allows sessions to see unmasked PII columns
@@ -43,4 +50,33 @@ resource "snowflake_tag" "pii" {
   comment  = "Marks columns containing personally identifiable information."
 
   masking_policies = [snowflake_masking_policy.pii_string.fully_qualified_name]
+}
+
+# ---------------------------------------------------------------------------
+# Tag → column associations
+#
+# Setting the PII tag on a column is what triggers masking — every raw review
+# table carries the same two reviewer-PII columns, so one association per
+# column name covers all four tables.
+# ---------------------------------------------------------------------------
+
+locals {
+  pii_review_tables = [
+    snowflake_table.airline_reviews,
+    snowflake_table.seat_reviews,
+    snowflake_table.lounge_reviews,
+    snowflake_table.airport_reviews,
+  ]
+  pii_columns = ["CUSTOMER_NAME", "NATIONALITY"]
+}
+
+resource "snowflake_tag_association" "pii_columns" {
+  for_each = toset(local.pii_columns)
+
+  object_identifiers = [
+    for table in local.pii_review_tables : "${table.fully_qualified_name}.\"${each.value}\""
+  ]
+  object_type = "COLUMN"
+  tag_id      = snowflake_tag.pii.fully_qualified_name
+  tag_value   = lower(each.value)
 }
