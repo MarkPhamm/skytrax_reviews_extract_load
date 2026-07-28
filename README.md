@@ -6,6 +6,8 @@ At Insurify, I work with Airflow, Terraform, and AWS every day. Two years ago, I
 
 This project is my attempt to break down the tools I use at work into something anyone can follow. It's an EL pipeline that scrapes 160,000+ reviews across four review types from [AirlineQuality.com](https://www.airlinequality.com/) — airlines, seats, lounges, and airports — stages type- and date-partitioned data to S3, and loads each type into its own Snowflake table, with every piece of infrastructure defined in Terraform so you know exactly what you're spinning up (and what it costs).
 
+> **Source status:** AirlineQuality.com (Skytrax) is **permanently closed**. Scrapes in this repo reflect the site while it was live; treat S3 `raw/` / `processed/` as a historical archive rather than a live feed from that domain.
+
 - **Four review types scraped in parallel** (airline, seat, lounge, airport) via Airflow dynamic task mapping — each type fans out into its own set of entities (airlines, seat classes, lounges, airports), scraped with entity-level thread-pool parallelism inside each task
 - **Dataset-driven DAG chaining** — no cron guesswork between stages; each DAG triggers the next the moment its upstream data actually lands
 - **Data quality gates** — every file is processed and uploaded first, *then* validated (schema / null-rate / rating-range); a file that fails is moved to a `quarantine/` S3 prefix and excluded from the Snowflake load rather than blocking the pipeline, and every `COPY INTO` is reconciled (rows parsed vs. rows loaded) into an auditable `LOAD_AUDIT` table
@@ -18,8 +20,10 @@ This project is my attempt to break down the tools I use at work into something 
 ```text
                     ┌──────────────────────────────┐
                     │   airlinequality.com         │
+                    │   (permanently closed)       │
                     └──────────────┬───────────────┘
                                    │ scrape (4 types × per-entity parallelism)
+                                   │ historical HTML while site was live
                                    ▼
                     ┌──────────────────────────────┐
                     │   S3: raw/<type>/YYYY/MM/    │
