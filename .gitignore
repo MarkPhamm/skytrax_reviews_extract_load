@@ -27,3 +27,4 @@ terraform/**/tfplan
 
 *.tfstate.*
 .cursor/
+.codegraph/

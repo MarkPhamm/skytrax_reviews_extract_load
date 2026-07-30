@@ -18,12 +18,14 @@ Prep notes for the AE-TPF technical interview (see [`prompts/AE-TPF-interview-pr
 Architecture (mirrors `README.md`):
 
 ```text
-airlinequality.com → scrape (26 A-Z tasks × 4 types)
+airlinequality.com → scrape (4 review types via dynamic task mapping;
+                              per-entity thread-pool parallelism inside each type)
                    → S3 raw/<type>/YYYY/MM/raw_data_YYYYMMDD.csv
                    → clean + transform
                    → S3 processed/<type>/YYYY/MM/clean_data_YYYYMMDD.csv
                    → COPY INTO
                    → Snowflake SKYTRAX_REVIEWS_DB.RAW.<TYPE>_REVIEWS
+                   (crawl schedule: daily 16:00 UTC)
 ```
 
 ---
@@ -72,7 +74,7 @@ airlinequality.com → scrape (26 A-Z tasks × 4 types)
 
 **Show**: three DAGs — `skytrax_crawl` → `skytrax_process` → `skytrax_snowflake` — chained via Airflow **Datasets** (`RAW_DATASET`, `PROCESSED_DATASET`) rather than fixed schedule offsets: `dag_process` is `schedule=[RAW_DATASET]`, `dag_snowflake` is `schedule=[PROCESSED_DATASET]`. Every DAG uses dynamic task mapping (`scrape_type.expand(review_type=REVIEW_TYPES)`, `load_one.expand_kwargs(...)`) instead of one task per category.
 
-**Why**: dataset-driven scheduling means `dag_process` fires the moment `dag_crawl` actually finishes uploading — no guessing "process should run ~1 hour after crawl." Dynamic task mapping means adding a 5th review type or scaling to more (type, date) pairs doesn't require duplicating DAG code — the same task fans out over however many items it's given. TaskFlow API (`@task`) keeps the actual logic in plain, unit-testable Python functions under `include/tasks/`, which is why 62 tests can run in under a second with no live Airflow/Snowflake/S3 needed.
+**Why**: dataset-driven scheduling means `dag_process` fires the moment `dag_crawl` actually finishes uploading — no guessing "process should run ~1 hour after crawl." Dynamic task mapping means adding a 5th review type or scaling to more (type, date) pairs doesn't require duplicating DAG code — the same task fans out over however many items it's given. TaskFlow API (`@task`) keeps the actual logic in plain, unit-testable Python functions under `include/tasks/`, which is why ~82 unit tests can run in under a second with no live Airflow/Snowflake/S3 needed.
 
 **What-if**: "Add a Slack notification after load" — add an `outlets=[...]`-driven or downstream `@task` after `upload_raw`/`load_one`; the dataset-chaining pattern already supports adding more consumers of the same event without touching upstream DAGs.
 
@@ -84,7 +86,7 @@ airlinequality.com → scrape (26 A-Z tasks × 4 types)
 
 - **Post-upload quality gate, non-blocking by design**: `include/tasks/common/quality.py::validate_processed_csv()` — checks schema drift (exact column match), non-empty files, null-rate thresholds on required columns, and star-rating range `[1, 5]`. It runs inside `dag_process.py` *after* each file is processed and uploaded — never before, and it never blocks. A failure is caught, the file is moved from `processed/` to a `quarantine/<type>/` S3 prefix (out of `COPY INTO`'s reach), and the date is recorded in the `QUALITY_REJECTED__<category>` Airflow Variable so `dag_snowflake` also excludes it explicitly (defense-in-depth on top of the quarantine move).
 - **Post-load reconciliation**: `copy_into_bulk()` compares `rows_parsed`/`rows_loaded`/`errors_seen` from Snowflake's own `COPY INTO` result and writes the outcome to a Terraform-managed `RAW.LOAD_AUDIT` table.
-- **PII masking**: `terraform/snowflake/masking.tf` — a `PII` tag + `MASK_PII_STRING` masking policy, with a `PII_READER` role that's the only one exempt from masking (besides `ACCOUNTADMIN`). `snowflake_tag_association` resources set the tag on `CUSTOMER_NAME`/`NATIONALITY` across all 4 raw tables — the association step is what makes masking actually fire; a tag + policy with no column associations masks nothing.
+- **PII masking (RAW layer)**: `terraform/snowflake/masking.tf` — a `PII` tag + `MASK_PII_STRING` masking policy, with a `PII_READER` role that's the only one exempt from masking (besides `ACCOUNTADMIN`). Masked form is `***MASKED***`. `snowflake_tag_association` resources set the tag on `CUSTOMER_NAME`/`NATIONALITY` across all 4 raw tables — the association step is what makes masking actually fire; a tag + policy with no column associations masks nothing. **Do not conflate with marts:** Part 2 applies a separate `PII_HASH_MASK` (SHA-256) on `dim_customer` for `SKYTRAX_ANALYST`; live A/B demo uses marts roles (`SKYTRAX_ANALYST` vs `SKYTRAX_TRANSFORMER`).
 - **Secrets hygiene**: `.env`, `terraform.tfvars`, and `.tfstate` are all gitignored and were verified untracked; no credentials ever hit git history.
 
 **Why**: a scraper is an unreliable, uncontrolled data source — the site's HTML can change shape at any time — so the quality gate exists to catch drift loudly rather than silently loading garbage. Validating *after* upload (reject-and-exclude) instead of blocking uploads is deliberate: the landing zone stays a faithful record of exactly what the pipeline produced, a rejected file is preserved in quarantine for inspection and replay once the check or the cleaning is fixed (instead of vanishing before it ever reached S3), one bad date never stalls the other dates or categories, and a single daily run and a multi-year backfill take the identical path. Supervised quarantine beats hard-blocking for a source you don't control. The post-load reconciliation exists because `COPY INTO ... ON_ERROR = 'CONTINUE'` can *partially* succeed without raising by default; without reconciliation, a partial load would look identical to a full one. Masking is tag-based (not hardcoded per-column grants) so it's declarative, auditable in Terraform, and doesn't need updating every time a new table adds a PII column with the same tag.
@@ -115,7 +117,7 @@ What's actually running today, and what a next increment would look like:
 
 1. `uv sync --extra dev` — reproducible dependency install
 2. `flake8` restricted to fatal error codes (`E9,F63,F7,F82`) — catches syntax errors and undefined names, not style nits
-3. `pytest tests/ -v` — 62 unit tests, all task logic mocked (no live Airflow/S3/Snowflake needed), so CI stays fast and free of cloud credentials in the common case
+3. `pytest tests/ -v` — ~82 unit tests, all task logic mocked (no live Airflow/S3/Snowflake needed), so CI stays fast and free of cloud credentials in the common case
 4. (Local, not yet in CI) `scripts/pre-commit` — same lint stack, run before every commit
 
 **Not yet automated — deliberate, and worth being able to explain why**:

@@ -78,7 +78,7 @@ The pipeline consists of three DAGs that are chained together via Airflow Datase
 
 ### `skytrax_crawl` — Extract
 
-Runs daily at 02:00 UTC. Scrapes airline reviews from airlinequality.com using 26 parallel tasks (one per letter A-Z), splits reviews by date, and uploads raw CSVs to S3. On completion, it emits the `skytrax://raw` dataset to trigger the next DAG.
+Runs daily at **16:00 UTC**. Scrapes four review types (airline / seat / lounge / airport) via Airflow dynamic task mapping, with per-entity thread-pool parallelism inside each type; splits reviews by date and uploads raw CSVs to S3. On completion, it emits the `skytrax://raw` dataset to trigger the next DAG.
 
 ![skytrax_crawl DAG](../assets/airflow/skytrax_crawl_dag.png)
 
@@ -98,7 +98,7 @@ Triggered automatically when `skytrax_process` emits processed data. Runs `COPY 
 
 ### Daily incremental run
 
-The `skytrax_crawl` DAG runs daily at 02:00 UTC. It scrapes yesterday's reviews, uploads to S3, and triggers the downstream DAGs via Datasets.
+The `skytrax_crawl` DAG runs daily at **16:00 UTC**. It scrapes yesterday's reviews (or a full historical backfill when `full_scrape=True`), uploads to S3, and triggers the downstream DAGs via Datasets.
 
 To trigger manually: click the play button on `skytrax_crawl` in the Airflow UI.
 
